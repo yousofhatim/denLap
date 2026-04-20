@@ -26,6 +26,112 @@ let uploadedFileName = null;
 let isReadOnly = false;
 let currentSecretCode = null;
 
+// AI Chat
+let currentConversation = [];
+let openAiApiKey = null;
+
+async function loadOpenAiApiKey() {
+    if (openAiApiKey) return openAiApiKey;
+    try {
+        const snap = await database.ref('1/splashActivity/mainActivity').once('value');
+        openAiApiKey = snap.val();
+        return openAiApiKey;
+    } catch (e) {
+        console.error('Error fetching AI key:', e);
+        return null;
+    }
+}
+
+function showAiChat(prefillText) {
+    const overlay = document.getElementById('aiChatOverlay');
+    if (!overlay) return;
+    const notice = document.getElementById('aiUnsavedNotice');
+    if (notice) notice.style.display = currentCaseId ? 'none' : 'block';
+    overlay.style.display = 'flex';
+    const sendInput = document.getElementById('aiSendInput');
+    if (prefillText && sendInput) { sendInput.value = prefillText; }
+    if (sendInput) sendInput.focus();
+    const messagesDiv = document.getElementById('aiMessages');
+    if (messagesDiv && messagesDiv.children.length === 0) {
+        addAiMessage('bot', 'مرحباً! أنا مساعدك الذكي 🤖\nاسألني عن أي شيء يخص حالة المريض أو طب الأسنان.');
+    }
+}
+
+function addAiMessage(sender, text) {
+    const messagesDiv = document.getElementById('aiMessages');
+    if (!messagesDiv) return;
+    const div = document.createElement('div');
+    div.className = sender === 'bot' ? 'ai-msg-bot' : 'ai-msg-user';
+    div.textContent = text;
+    messagesDiv.appendChild(div);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+}
+
+async function sendAiMessage() {
+    const input = document.getElementById('aiSendInput');
+    const text  = input ? input.value.trim() : '';
+    if (!text) return;
+    if (input) input.value = '';
+
+    addAiMessage('user', text);
+    currentConversation.push({ role: 'user', content: text });
+
+    const messagesDiv = document.getElementById('aiMessages');
+    const typingDiv   = document.createElement('div');
+    typingDiv.className = 'ai-msg-bot ai-typing';
+    typingDiv.textContent = '...';
+    if (messagesDiv) { messagesDiv.appendChild(typingDiv); messagesDiv.scrollTop = messagesDiv.scrollHeight; }
+
+    const sendBtn = document.getElementById('aiSendBtn');
+    if (sendBtn) sendBtn.disabled = true;
+
+    try {
+        const apiKey = await loadOpenAiApiKey();
+        if (!apiKey) {
+            typingDiv.remove();
+            addAiMessage('bot', '❌ لم يتم العثور على مفتاح الاتصال بالذكاء الاصطناعي');
+            return;
+        }
+
+        const patientCtx = document.getElementById('patientName')?.value?.trim() || '';
+        const systemMsg  = `أنت مساعد ذكي متخصص في طب الأسنان والمختبرات السنية.${patientCtx ? ` المريض الحالي: ${patientCtx}.` : ''} أجب بالعربية دائماً وكن دقيقاً ومفيداً.`;
+
+        const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+            body: JSON.stringify({
+                model: 'gpt-4o-mini',
+                messages: [{ role: 'system', content: systemMsg }, ...currentConversation],
+                max_tokens: 600
+            })
+        });
+
+        const data = await resp.json();
+        typingDiv.remove();
+
+        if (data.choices && data.choices[0]) {
+            const reply = data.choices[0].message.content;
+            addAiMessage('bot', reply);
+            currentConversation.push({ role: 'assistant', content: reply });
+            saveConversationToFirebase();
+        } else {
+            addAiMessage('bot', '❌ حدث خطأ في الرد: ' + (data.error?.message || 'خطأ غير معروف'));
+        }
+    } catch (err) {
+        typingDiv.remove();
+        addAiMessage('bot', '❌ تعذر الاتصال: ' + err.message);
+    }
+
+    if (sendBtn) sendBtn.disabled = false;
+}
+
+async function saveConversationToFirebase() {
+    if (!currentCaseId) return;
+    try {
+        await database.ref(`${getDatabasePath()}/${currentCaseId}/conversation`).set(currentConversation);
+    } catch (e) { console.error('Conversation save error:', e); }
+}
+
 // أرقام الأسنان
 const upperTeeth = [18,17,16,15,14,13,12,11,21,22,23,24,25,26,27,28];
 const lowerTeeth = [48,47,46,45,44,43,42,41,31,32,33,34,35,36,37,38];
@@ -1040,6 +1146,12 @@ function resetForm() {
 
     const today = new Date();
     document.getElementById('date').value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+    // Reset AI conversation
+    currentConversation = [];
+    const aiMessages = document.getElementById('aiMessages');
+    if (aiMessages) aiMessages.innerHTML = '';
+
     alert("✨ تم تهيئة الحقول لحالة جديدة - يمكنك الآن إدخال البيانات");
 }
 
@@ -1201,55 +1313,26 @@ function showCustomerService() {
 }
 
 function showCustomerServiceCard(patientName) {
-    const overlay = document.createElement('div');
-    overlay.className = 'cs-overlay';
-    const card = document.createElement('div');
-    card.className = 'cs-card';
-    card.innerHTML = `
-        <div class="cs-header"><button class="cs-close-btn">✕</button><h3>🤖 خدمة العملاء</h3><p>الدعم الفني والمساعدة</p></div>
-        <div class="cs-bot-message"><div class="cs-bot-avatar"><div class="cs-bot-icon">🤖</div><div class="cs-bot-name">مساعد خدمة العملاء</div></div><div class="cs-bot-text">أقدر أساعد حضرتك إزاي يا دكتور في حالة المريض <span class="cs-patient-name">"${escapeHtml(patientName)}"</span><br><br>هل هتحتاج تعدل كروس؟ ولا تضيف ملحوظة؟ ولا تغير حاجة معينة؟ ولا تكنسل الحالة؟</div></div>
-        <div class="cs-options"><button class="cs-option-btn cs-option-edit" data-action="edit">✏️ تعديل كروس</button><button class="cs-option-btn cs-option-note" data-action="note">📝 إضافة ملحوظة</button><button class="cs-option-btn cs-option-change" data-action="change">🔄 تغيير حاجة معينة</button><button class="cs-option-btn cs-option-cancel" data-action="cancel">❌ إلغاء الحالة</button></div>
-        <div class="cs-input-section" id="csInputSection"><div id="csInputContent"></div><div class="cs-action-buttons"><button class="cs-back-btn" id="csBackBtn">🔙 رجوع</button><button class="cs-submit-btn" id="csSubmitBtn">✅ تأكيد</button></div><div class="cs-success-msg" id="csSuccessMsg"></div></div>
-    `;
-    overlay.appendChild(card);
-    document.body.appendChild(overlay);
+    const overlay = document.getElementById('csOverlay');
+    if (!overlay) return;
 
-    card.querySelector('.cs-close-btn').addEventListener('click', () => overlay.remove());
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    // Update bot text with patient name
+    const botText = document.getElementById('csBotText');
+    if (botText) {
+        botText.innerHTML = `أقدر أساعد حضرتك إزاي يا دكتور في حالة المريض <span class="cs-patient-name">"${escapeHtml(patientName)}"</span><br><br>هل هتحتاج تعدل كروس؟ ولا تضيف ملحوظة؟ ولا تغير حاجة معينة؟ ولا تكنسل الحالة؟`;
+    }
 
-    const inputSection = card.querySelector('#csInputSection');
-    const inputContent = card.querySelector('#csInputContent');
-    const successMsg = card.querySelector('#csSuccessMsg');
-    let currentAction = null;
+    // Reset input section
+    const inputSection = document.getElementById('csInputSection');
+    if (inputSection) inputSection.classList.remove('show');
+    const successMsg = document.getElementById('csSuccessMsg');
+    if (successMsg) { successMsg.classList.remove('show'); successMsg.textContent = ''; }
+    const inputContent = document.getElementById('csInputContent');
+    if (inputContent) inputContent.innerHTML = '';
 
-    card.querySelectorAll('.cs-option-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            currentAction = btn.dataset.action;
-            showInputForm(currentAction, inputContent, patientName);
-            inputSection.classList.add('show');
-            successMsg.classList.remove('show');
-        });
-    });
-
-    card.querySelector('#csBackBtn').addEventListener('click', () => { inputSection.classList.remove('show'); currentAction = null; successMsg.classList.remove('show'); });
-    card.querySelector('#csSubmitBtn').addEventListener('click', async () => {
-        if (!currentAction) return;
-        let result = false, message = '';
-        switch(currentAction) {
-            case 'edit': result = await handleEditCross(document.getElementById('cs_cross_value')?.value, patientName); message = result ? '✅ تم تعديل الكروس بنجاح' : '❌ حدث خطأ'; break;
-            case 'note': result = await handleAddNote(document.getElementById('cs_note_text')?.value, patientName); message = result ? '✅ تم إضافة الملحوظة بنجاح' : '❌ حدث خطأ'; break;
-            case 'change': result = await handleChangeSomething(document.getElementById('cs_change_type')?.value, document.getElementById('cs_change_value')?.value, patientName); message = result ? '✅ تم التغيير بنجاح' : '❌ حدث خطأ'; break;
-            case 'cancel': result = await handleCancelCase(document.getElementById('cs_cancel_reason')?.value, patientName); message = result ? '✅ تم إلغاء الحالة بنجاح' : '❌ حدث خطأ'; break;
-        }
-        if (result) {
-            successMsg.textContent = message;
-            successMsg.classList.add('show');
-            setTimeout(() => {
-                if (currentAction === 'cancel') { overlay.remove(); resetForm(); }
-                else { inputSection.classList.remove('show'); successMsg.classList.remove('show'); currentAction = null; }
-            }, 2000);
-        } else { alert(message); }
-    });
+    overlay.style.display = 'flex';
+    overlay._currentAction = null;
+    overlay._patientName   = patientName;
 }
 
 function showInputForm(action, container, patientName) {
@@ -1329,6 +1412,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!loadUserData()) return;
     initAdvancedDentalSystem();
     setupStatusSteps();
+
     document.getElementById('uploadScannerBtn').addEventListener('click', uploadScannerFile);
     document.getElementById('saveBtnDashboard').addEventListener('click', saveCaseToFirebase);
     document.getElementById('newBtnDashboard').addEventListener('click', resetForm);
@@ -1336,6 +1420,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('logoutBtn').addEventListener('click', handleLogout);
     document.getElementById('customerServiceBtn').addEventListener('click', showCustomerService);
 
+    // Treatment sidebar
     const tpDeselectBtn = document.getElementById('tpDeselectBtn');
     if (tpDeselectBtn) {
         tpDeselectBtn.addEventListener('click', () => {
@@ -1344,19 +1429,116 @@ document.addEventListener('DOMContentLoaded', () => {
             resetTreatmentPanel();
         });
     }
-
     const tpChangeBtn = document.getElementById('tpChangeBtn');
     if (tpChangeBtn) {
-        tpChangeBtn.addEventListener('click', () => {
-            if (selectedTooth) showTreatmentPanel(selectedTooth);
-        });
+        tpChangeBtn.addEventListener('click', () => { if (selectedTooth) showTreatmentPanel(selectedTooth); });
     }
-
     const tpDefaultTooth = document.getElementById('tpDefaultTooth');
     if (tpDefaultTooth) {
-        tpDefaultTooth.addEventListener('pointerdown', (e) => {
-            if (isReadOnly) return;
-            startClearDrag(e);
+        tpDefaultTooth.addEventListener('pointerdown', (e) => { if (!isReadOnly) startClearDrag(e); });
+    }
+
+    // ===== AI Chat =====
+    const aiChatBtn = document.getElementById('aiChatBtn');
+    if (aiChatBtn) {
+        aiChatBtn.addEventListener('click', () => {
+            const input = document.getElementById('aiChatInput');
+            const text  = input ? input.value.trim() : '';
+            if (input) input.value = '';
+            showAiChat(text || null);
+        });
+    }
+    const aiChatInput = document.getElementById('aiChatInput');
+    if (aiChatInput) {
+        aiChatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const text = aiChatInput.value.trim();
+                aiChatInput.value = '';
+                showAiChat(text || null);
+            }
+        });
+    }
+    const aiBackBtn = document.getElementById('aiBackBtn');
+    if (aiBackBtn) {
+        aiBackBtn.addEventListener('click', () => {
+            const overlay = document.getElementById('aiChatOverlay');
+            if (overlay) overlay.style.display = 'none';
+        });
+    }
+    const aiBackdrop = document.getElementById('aiBackdrop');
+    if (aiBackdrop) {
+        aiBackdrop.addEventListener('click', () => {
+            const overlay = document.getElementById('aiChatOverlay');
+            if (overlay) overlay.style.display = 'none';
+        });
+    }
+    const aiSendBtn = document.getElementById('aiSendBtn');
+    if (aiSendBtn) aiSendBtn.addEventListener('click', sendAiMessage);
+    const aiSendInput = document.getElementById('aiSendInput');
+    if (aiSendInput) {
+        aiSendInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendAiMessage(); });
+    }
+
+    // ===== Customer Service Overlay (pre-built HTML) =====
+    const csOverlay = document.getElementById('csOverlay');
+    if (csOverlay) {
+        document.getElementById('csCloseBtn').addEventListener('click', () => { csOverlay.style.display = 'none'; });
+        csOverlay.addEventListener('click', (e) => { if (e.target === csOverlay) csOverlay.style.display = 'none'; });
+
+        csOverlay.querySelectorAll('.cs-option-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                csOverlay._currentAction = btn.dataset.action;
+                const inputContent = document.getElementById('csInputContent');
+                showInputForm(csOverlay._currentAction, inputContent, csOverlay._patientName);
+                document.getElementById('csInputSection').classList.add('show');
+                const successMsg = document.getElementById('csSuccessMsg');
+                if (successMsg) { successMsg.classList.remove('show'); successMsg.textContent = ''; }
+            });
+        });
+
+        document.getElementById('csBackBtn').addEventListener('click', () => {
+            document.getElementById('csInputSection').classList.remove('show');
+            csOverlay._currentAction = null;
+            const successMsg = document.getElementById('csSuccessMsg');
+            if (successMsg) { successMsg.classList.remove('show'); successMsg.textContent = ''; }
+        });
+
+        document.getElementById('csSubmitBtn').addEventListener('click', async () => {
+            const action      = csOverlay._currentAction;
+            const patientName = csOverlay._patientName;
+            if (!action) return;
+            let result = false, message = '';
+            switch (action) {
+                case 'edit':
+                    result  = await handleEditCross(document.getElementById('cs_cross_value')?.value, patientName);
+                    message = result ? '✅ تم تعديل الكروس بنجاح' : '❌ حدث خطأ';
+                    break;
+                case 'note':
+                    result  = await handleAddNote(document.getElementById('cs_note_text')?.value, patientName);
+                    message = result ? '✅ تم إضافة الملحوظة بنجاح' : '❌ حدث خطأ';
+                    break;
+                case 'change':
+                    result  = await handleChangeSomething(document.getElementById('cs_change_type')?.value, document.getElementById('cs_change_value')?.value, patientName);
+                    message = result ? '✅ تم التغيير بنجاح' : '❌ حدث خطأ';
+                    break;
+                case 'cancel':
+                    result  = await handleCancelCase(document.getElementById('cs_cancel_reason')?.value, patientName);
+                    message = result ? '✅ تم إلغاء الحالة بنجاح' : '❌ حدث خطأ';
+                    break;
+            }
+            const successMsg = document.getElementById('csSuccessMsg');
+            if (result && successMsg) {
+                successMsg.textContent = message;
+                successMsg.classList.add('show');
+                setTimeout(() => {
+                    if (action === 'cancel') { csOverlay.style.display = 'none'; resetForm(); }
+                    else {
+                        document.getElementById('csInputSection').classList.remove('show');
+                        successMsg.classList.remove('show');
+                        csOverlay._currentAction = null;
+                    }
+                }, 2000);
+            } else if (!result) { alert(message); }
         });
     }
 });
