@@ -12,26 +12,37 @@
             <button class="tab-btn active" data-tab="login">تسجيل الدخول</button>
             <button class="tab-btn" data-tab="signup">تسجيل عيادة جديدة</button>
         </div>
-        
+
         <div id="loginForm" class="auth-form">
             <input type="email" id="loginEmail" class="input-field" placeholder="البريد الإلكتروني">
             <input type="password" id="loginPassword" class="input-field" placeholder="كلمة المرور">
             <div id="loginError" class="error-msg" style="display: none;"></div>
             <button id="doLoginBtn" class="auth-btn">دخول إلى العيادة</button>
         </div>
-        
+
         <div id="signupForm" class="auth-form hidden">
             <input type="text" id="clinicName" class="input-field" placeholder="اسم العيادة *">
-            <input type="text" id="clinicNumber" class="input-field" placeholder="رقم العيادة *">
+            <input type="text" id="clinicNumber" class="input-field" placeholder="رقم العيادة / هاتف *">
             <input type="text" id="doctorName" class="input-field" placeholder="اسم الدكتور/الطبيب *">
             <input type="email" id="signupEmail" class="input-field" placeholder="البريد الإلكتروني *">
             <input type="password" id="signupPassword" class="input-field" placeholder="كلمة المرور *">
             <input type="password" id="confirmPassword" class="input-field" placeholder="تأكيد كلمة المرور *">
+
+            <div class="location-picker-section">
+                <button type="button" id="getLocationBtn" class="location-btn">
+                    📍 تحديد موقع العيادة
+                </button>
+                <div id="locationDisplay" class="location-display hidden">
+                    <span id="locationText"></span>
+                    <a id="locationMapLink" href="#" target="_blank" rel="noopener">🗺️ عرض على الخريطة</a>
+                </div>
+            </div>
+
             <div id="signupError" class="error-msg" style="display: none;"></div>
             <button id="doSignupBtn" class="auth-btn">إنشاء العيادة والتسجيل</button>
         </div>
     </div>
-    
+
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
