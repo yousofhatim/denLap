@@ -1,4 +1,4 @@
-// تكوين Firebase
+// تكوين Firebae
 const firebaseConfig = {
     apiKey: "AIzaSyDhdID2wAdkpl-Hc-8mWvMz83PNfAgRto8",
     authDomain: "kid-id.firebaseapp.com",
