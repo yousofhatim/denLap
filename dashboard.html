@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>لوحة تحكم عيادات الأسنان</title>
+    <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+    <div id="dashboardSection" class="dashboard-container">
+        <div class="dashboard-header">
+            <div class="welcome-area">
+                <h2 id="welcomeMessage">مرحباً دكتور</h2>
+                <p id="clinicSubtitle">نظام إدارة العيادة المتقدم</p>
+            </div>
+            <button id="logoutBtn" class="logout-btn">🚪 تسجيل خروج</button>
+        </div>
+
+        <div class="status-bar">
+            <div class="status-steps">
+                <div class="status-step" data-step="1">
+                    <div class="step-icon">📦</div>
+                    <div class="step-title">وصول الطلب للمعمل</div>
+                    <div class="step-date" id="step1-date"></div>
+                </div>
+                <div class="status-step" data-step="2">
+                    <div class="step-icon">🚚</div>
+                    <div class="step-title">إرسال مندوب</div>
+                    <div class="step-date" id="step2-date"></div>
+                </div>
+                <div class="status-step" data-step="3">
+                    <div class="step-icon">⚙️</div>
+                    <div class="step-title">قيد العمل</div>
+                    <div class="step-date" id="step3-date"></div>
+                </div>
+                <div class="status-step" data-step="4">
+                    <div class="step-icon">🏥</div>
+                    <div class="step-title">الشحن للعيادة</div>
+                    <div class="step-date" id="step4-date"></div>
+                </div>
+                <div class="progress-line"></div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="right-section">
+                <div class="input-group">
+                    <label>👤 اسم المريض <span style="color: #ff6b6b;">*</span></label>
+                    <input type="text" id="patientName" placeholder="أدخل اسم المريض (إلزامي)">
+                </div>
+                <div class="input-group">
+                    <label>📝 الملاحظات</label>
+                    <textarea id="notes" placeholder="الملاحظات الطبية ..." rows="3"></textarea>
+                </div>
+                <div class="input-group">
+                    <label>📅 التاريخ</label>
+                    <input type="text" id="date" placeholder="مثال: 2026-04-02">
+                </div>
+                <div class="input-group">
+                    <label>🔢 عدد الحالات اليوم</label>
+                    <input type="text" id="dailyCasesCount" placeholder="عدد الحالات">
+                </div>
+                <div class="action-buttons">
+                    <button class="primary-btn" id="saveBtnDashboard">💾 حفظ الحالة</button>
+                    <button class="primary-btn secondary-btn" id="newBtnDashboard">✨ جديد</button>
+                    <button class="primary-btn record-btn" id="recordBtnDashboard">📋 السجل</button>
+                    <button class="primary-btn" id="customerServiceBtn">🤖 خدمة العملاء</button>
+                </div>
+                <div class="info-text">
+                    💡 حدد السن أولاً ثم اختر العلاج<br>
+                    📎 يمكنك رفع ملف السكان قبل الحفظ (اختياري)
+                </div>
+            </div>
+
+            <div class="middle-section">
+                <div class="teeth-container" id="teethContainer">
+                    <div class="upload-scanner-btn" id="uploadScannerBtn">
+                        <div class="icon">📎</div>
+                        <div class="text">رفع ملف السكان</div>
+                    </div>
+                    <div class="upload-progress-bar" id="uploadProgressBar">
+                        <div class="progress-bar-container">
+                            <div class="progress-fill" id="progressFill"></div>
+                        </div>
+                        <div class="progress-text" id="progressText">0%</div>
+                        <div class="progress-status" id="progressStatus">📦 جاري التحضير...</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="left-section" id="treatmentSidebar">
+                <div id="tpEmpty" class="tp-empty">
+                    <div class="tp-empty-icon">🦷</div>
+                    <div class="tp-empty-label">اختر سنًا أولاً<br>لتحديد نوع العلاج</div>
+                </div>
+                <div id="tpActive" class="tp-active" style="display:none;">
+                    <div class="tp-tooth-header">
+                        <span>🦷 السن: <strong id="tpToothNum">-</strong></span>
+                        <button class="tp-deselect-btn" id="tpDeselectBtn" title="إلغاء">✕</button>
+                    </div>
+                    <div id="tpCategoriesList" class="tp-categories-list"></div>
+                </div>
+                <div id="tpLocked" class="tp-locked" style="display:none;">
+                    <div class="tp-lock-icon">🔒</div>
+                    <div id="tpLockedInfo" class="tp-locked-info"></div>
+                    <button class="tp-change-btn" id="tpChangeBtn">✏️ تغيير العلاج</button>
+                </div>
+                <div class="tp-clear-section">
+                    <div class="tp-default-tooth" id="tpDefaultTooth">✕</div>
+                    <div class="tp-drag-hint">اسحب لإزالة علاج سن</div>
+                </div>
+                <div class="info-text" style="flex-shrink:0;">
+                    🎯 تم تحديد <span id="selectedToothCount">0</span> سن
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+    <script src="dashboard.js"></script>
+</body>
+</html>
