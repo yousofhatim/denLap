@@ -41,7 +41,7 @@
                     <div class="step-title">الشحن للعيادة</div>
                     <div class="step-date" id="step4-date"></div>
                 </div>
-                <div class="progress-line"></div>
+                <div class="progress-line"><div class="progress-line-fill" id="progressLineFill"></div></div>
             </div>
         </div>
 
@@ -57,14 +57,6 @@
                 <div class="input-group">
                     <label>📝 الملاحظات</label>
                     <textarea id="notes" placeholder="الملاحظات الطبية ..." rows="3"></textarea>
-                </div>
-                <div class="input-group">
-                    <label>📅 التاريخ</label>
-                    <input type="text" id="date" placeholder="مثال: 2026-04-02">
-                </div>
-                <div class="input-group">
-                    <label>🔢 عدد الحالات اليوم</label>
-                    <input type="text" id="dailyCasesCount" placeholder="عدد الحالات">
                 </div>
                 <div class="action-buttons">
                     <button class="primary-btn" id="saveBtnDashboard">💾 حفظ الحالة</button>
