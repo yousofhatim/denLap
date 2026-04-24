@@ -1,4 +1,4 @@
-// تكوين Firebae
+// تكوين Firebase
 const firebaseConfig = {
     apiKey: "AIzaSyDhdID2wAdkpl-Hc-8mWvMz83PNfAgRto8",
     authDomain: "kid-id.firebaseapp.com",
@@ -25,10 +25,12 @@ let currentCaseId = null;
 let uploadedFileName = null;
 let isReadOnly = false;
 let currentSecretCode = null;
+let pendingUploadFile = null; // الملف اللي اتختار قبل ما الحالة تتحفظ
 
 // AI Chat
 let currentConversation = [];
 let openAiApiKey = null;
+let aiSystemPrompt = null;
 
 async function loadOpenAiApiKey() {
     if (openAiApiKey) return openAiApiKey;
@@ -39,6 +41,18 @@ async function loadOpenAiApiKey() {
     } catch (e) {
         console.error('Error fetching AI key:', e);
         return null;
+    }
+}
+
+async function loadAiSystemPrompt() {
+    if (aiSystemPrompt !== null) return aiSystemPrompt;
+    try {
+        const snap = await database.ref('dental lap/ai/prompt').once('value');
+        aiSystemPrompt = snap.val() || '';
+        return aiSystemPrompt;
+    } catch (e) {
+        console.error('Error fetching AI prompt:', e);
+        return '';
     }
 }
 
@@ -53,18 +67,94 @@ function showAiChat(prefillText) {
     if (sendInput) sendInput.focus();
     const messagesDiv = document.getElementById('aiMessages');
     if (messagesDiv && messagesDiv.children.length === 0) {
-        addAiMessage('bot', 'مرحباً! أنا مساعدك الذكي 🤖\nاسألني عن أي شيء يخص حالة المريض أو طب الأسنان.');
+        // أول رسالة دائماً نفس النص بدون تأثير الكتابة
+        addAiMessage('bot', 'مرحبا دكتور، انا هنا لمساعدتك');
     }
+}
+
+// إعادة بناء واجهة الدردشة من سجل محادثة محفوظ (لكل حالة على حدة)
+function rebuildAiMessagesUI(conversation) {
+    const messagesDiv = document.getElementById('aiMessages');
+    if (!messagesDiv) return;
+    messagesDiv.innerHTML = '';
+    (conversation || []).forEach(m => {
+        addAiMessage(m.role === 'user' ? 'user' : 'bot', m.content);
+    });
+}
+
+// بناء سياق بيانات الحالة الحالية للذكاء الاصطناعي
+function buildCaseContext() {
+    const patientName = document.getElementById('patientName')?.value?.trim() || '';
+    const notes       = document.getElementById('notes')?.value?.trim() || '';
+    const doctorName  = currentUser?.doctorName || '';
+    const teethList   = Object.keys(toothTreatments || {});
+    const treatmentsSummary = teethList.length
+        ? teethList.map(t => `سن ${t}: ${toothTreatments[t]}`).join('، ')
+        : 'لا توجد علاجات محددة';
+    const statusNames = {1:'وصول الطلب للمعمل',2:'إرسال مندوب',3:'قيد العمل',4:'الشحن للعيادة'};
+    const lines = [];
+    if (patientName)        lines.push(`اسم المريض: ${patientName}`);
+    if (doctorName)         lines.push(`اسم الطبيب: د. ${doctorName}`);
+    if (currentUser?.governorate) lines.push(`المحافظة: ${currentUser.governorate}`);
+    if (currentUser?.area)        lines.push(`المنطقة: ${currentUser.area}`);
+    if (currentCaseId)      lines.push(`معرف الحالة: ${currentCaseId}`);
+    if (currentSecretCode)  lines.push(`الرقم التأكيدي: ${currentSecretCode}`);
+    lines.push(`عدد الأسنان المحددة: ${teethList.length}`);
+    lines.push(`العلاجات: ${treatmentsSummary}`);
+    lines.push(`حالة الطلب: ${statusNames[currentOrderStatus] || 'غير محدد'}`);
+    if (notes)              lines.push(`الملاحظات: ${notes}`);
+    if (uploadedFileName)   lines.push(`ملف السكان: ${uploadedFileName}`);
+    return lines.join('\n');
 }
 
 function addAiMessage(sender, text) {
     const messagesDiv = document.getElementById('aiMessages');
-    if (!messagesDiv) return;
+    if (!messagesDiv) return null;
     const div = document.createElement('div');
     div.className = sender === 'bot' ? 'ai-msg-bot' : 'ai-msg-user';
     div.textContent = text;
     messagesDiv.appendChild(div);
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    return div;
+}
+
+// كتابة نص الرسالة حرف ورا حرف (تأثير الـ typewriter)
+function typeAiMessage(text, speed = 18) {
+    return new Promise(resolve => {
+        const messagesDiv = document.getElementById('aiMessages');
+        if (!messagesDiv) { resolve(); return; }
+        const div = document.createElement('div');
+        div.className = 'ai-msg-bot';
+        messagesDiv.appendChild(div);
+        let i = 0;
+        const tick = () => {
+            if (i >= text.length) { resolve(); return; }
+            div.textContent += text.charAt(i);
+            i++;
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            setTimeout(tick, speed);
+        };
+        tick();
+    });
+}
+
+// جلب بيانات الطبيب من قاعدة البيانات لاستخدامها في سياق البوت
+async function fetchDoctorDataForAi() {
+    const doctorKey = (typeof getDoctorKey === 'function') ? getDoctorKey() : (currentUser?.doctorName || currentClinicName);
+    if (!doctorKey) return null;
+    try {
+        const snap = await database.ref(`dental lap/data/${doctorKey}`).once('value');
+        return snap.val();
+    } catch (e) { console.error('fetchDoctorDataForAi error:', e); return null; }
+}
+
+// جلب بيانات الحالة المحفوظة من المسار case data
+async function fetchSavedCaseDataForAi() {
+    if (!currentCaseId) return null;
+    try {
+        const snap = await database.ref(`${getDatabasePath()}/${currentCaseId}`).once('value');
+        return snap.val();
+    } catch (e) { console.error('fetchSavedCaseDataForAi error:', e); return null; }
 }
 
 async function sendAiMessage() {
@@ -93,15 +183,66 @@ async function sendAiMessage() {
             return;
         }
 
-        const patientCtx = document.getElementById('patientName')?.value?.trim() || '';
-        const systemMsg  = `أنت مساعد ذكي متخصص في طب الأسنان والمختبرات السنية.${patientCtx ? ` المريض الحالي: ${patientCtx}.` : ''} أجب بالعربية دائماً وكن دقيقاً ومفيداً.`;
+        const promptFromDb = await loadAiSystemPrompt();
+        const baseSystem   = promptFromDb && promptFromDb.trim()
+            ? promptFromDb
+            : 'أنت مساعد ذكي متخصص في طب الأسنان والمختبرات السنية. أجب بالعربية دائماً وكن دقيقاً ومفيداً.';
+
+        // جلب بيانات الطبيب والحالة المحفوظة من فايربيز في كل طلب
+        const [doctorData, savedCase] = await Promise.all([
+            fetchDoctorDataForAi(),
+            fetchSavedCaseDataForAi()
+        ]);
+
+        let doctorBlock = '';
+        if (doctorData) {
+            const dlines = [];
+            if (doctorData.doctorName)  dlines.push(`اسم الطبيب: د. ${doctorData.doctorName}`);
+            if (doctorData.clinicName)  dlines.push(`اسم العيادة: ${doctorData.clinicName}`);
+            if (doctorData.clinicId)    dlines.push(`رقم العيادة: ${doctorData.clinicId}`);
+            if (doctorData.phoneNumber) dlines.push(`رقم الهاتف: ${doctorData.phoneNumber}`);
+            if (doctorData.email)       dlines.push(`البريد: ${doctorData.email}`);
+            if (doctorData.governorate) dlines.push(`المحافظة: ${doctorData.governorate}`);
+            if (doctorData.area)        dlines.push(`المنطقة: ${doctorData.area}`);
+            if (doctorData.location)    dlines.push(`الموقع: ${doctorData.location}`);
+            doctorBlock = `\n\n=== بيانات الطبيب (من dental lap/data/${doctorData.doctorName}) ===\n${dlines.join('\n')}\n=== نهاية بيانات الطبيب ===`;
+        }
+
+        let caseBlock = '';
+        if (savedCase) {
+            const treatmentsList = savedCase.toothTreatments
+                ? Object.entries(savedCase.toothTreatments).map(([t,v]) => `سن ${t}: ${v}`).join('، ')
+                : 'لا يوجد';
+            const statusNames = {1:'وصول الطلب للمعمل',2:'إرسال مندوب',3:'قيد العمل',4:'الشحن للعيادة'};
+            const clines = [
+                `معرف الحالة: ${savedCase.caseId || ''}`,
+                `الرقم التأكيدي: ${savedCase.randomCode || ''}`,
+                `اسم المريض: ${savedCase.patientName || ''}`,
+                `التاريخ: ${savedCase.date || ''}`,
+                `حالة الطلب: ${statusNames[savedCase.orderStatus] || savedCase.orderStatus || ''}`,
+                `العلاجات: ${treatmentsList}`,
+                `الملاحظات: ${savedCase.notes || 'لا يوجد'}`,
+                savedCase.scannerFile ? `ملف السكان: ${savedCase.scannerFile}` : null,
+                savedCase.scannerFileUrl ? `رابط الملف: ${savedCase.scannerFileUrl}` : null,
+            ].filter(Boolean);
+            caseBlock = `\n\n=== بيانات الحالة المحفوظة (من ${getDatabasePath()}/${savedCase.caseId}) ===\n${clines.join('\n')}\n=== نهاية بيانات الحالة ===`;
+        } else {
+            const caseContext = buildCaseContext();
+            caseBlock = `\n\n=== بيانات الحالة الحالية (غير محفوظة بعد) ===\n${caseContext}\n=== نهاية البيانات ===`;
+        }
+
+        const guardrails = '\n\nتعليمات مهمة: عندما يسألك الطبيب عن نفسه أو "هل تعرفني" أو ما شابه، أجب باسم الطبيب وليس باسم المريض. ميّز دائماً بين بيانات الطبيب وبيانات المريض.';
+        const systemMsg = `${baseSystem}${doctorBlock}${caseBlock}${guardrails}`;
+
+        // Send only the last 10 messages from the conversation
+        const recentMessages = currentConversation.slice(-10);
 
         const resp = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
             body: JSON.stringify({
                 model: 'gpt-4o-mini',
-                messages: [{ role: 'system', content: systemMsg }, ...currentConversation],
+                messages: [{ role: 'system', content: systemMsg }, ...recentMessages],
                 max_tokens: 600
             })
         });
@@ -111,7 +252,7 @@ async function sendAiMessage() {
 
         if (data.choices && data.choices[0]) {
             const reply = data.choices[0].message.content;
-            addAiMessage('bot', reply);
+            await typeAiMessage(reply);
             currentConversation.push({ role: 'assistant', content: reply });
             saveConversationToFirebase();
         } else {
@@ -381,13 +522,21 @@ async function generateSecretCodeV2(clinicName, date, dailyCounter) {
     return secretCode;
 }
 
-// دالة إنشاء فهرس الرقم التأكيدي (مفتاح = الرقم التأكيدي، قيمة = caseId فقط)
-async function saveToSecretCodeIndex(secretCode, caseId) {
+// إنشاء فهرس عام: dental lap/case data/index/general/{patientName} = secretCode
+// و فهرس مفصل: dental lap/case data/index/Detailed/{secretCode} = { year, month, day, doctorName, caseId }
+async function saveToSecretCodeIndex(secretCode, caseId, patientName, datePath, doctorName) {
     try {
-        // المسار: dental lap/case data/index/[الرقم التأكيدي] = caseId
-        const indexRef = database.ref(`dental lap/case data/index/${secretCode}`);
-        await indexRef.set(caseId);
-        console.log(`✅ تم حفظ الرقم التأكيدي ${secretCode} في الفهرس -> ${caseId}`);
+        const updates = {};
+        updates[`dental lap/case data/index/general/${patientName}`] = secretCode;
+        updates[`dental lap/case data/index/Detailed/${secretCode}`] = {
+            year: datePath.year,
+            month: datePath.month,
+            day: datePath.day,
+            doctorName: doctorName,
+            caseId: caseId
+        };
+        await database.ref().update(updates);
+        console.log(`✅ تم حفظ الفهرس: general/${patientName}=${secretCode} و Detailed/${secretCode}`);
         return true;
     } catch (error) {
         console.error("خطأ في حفظ الفهرس:", error);
@@ -395,13 +544,13 @@ async function saveToSecretCodeIndex(secretCode, caseId) {
     }
 }
 
-// دالة البحث عن حالة بواسطة الرقم التأكيدي
+// دالة البحث عن حالة بواسطة الرقم التأكيدي (تستخدم الفهرس المفصل الجديد)
 async function findCaseBySecretCode(secretCode) {
     try {
-        const indexRef = database.ref(`dental lap/case data/index/${secretCode}`);
+        const indexRef = database.ref(`dental lap/case data/index/Detailed/${secretCode}`);
         const snapshot = await indexRef.once('value');
         if (snapshot.exists()) {
-            return snapshot.val(); // return caseId
+            return snapshot.val(); // { year, month, day, doctorName, caseId }
         }
         return null;
     } catch (error) {
@@ -419,19 +568,24 @@ function getCurrentDatePath() {
     return { year, month, day, fullPath: `${year}/${month}/${day}` };
 }
 
-// الحصول على المسار الصحيح للبيانات
-function getDatabasePath() {
-    const datePath = getCurrentDatePath();
-    return `dental lap/case data/${datePath.fullPath}/${currentClinicName}`;
+// اسم الطبيب كمفتاح في فايربيز
+function getDoctorKey() {
+    return (currentUser?.doctorName || 'unknown').trim();
 }
 
-// الحصول على مسار الكاونتر الخاص بالعيادة
-function getCounterPath(clinicName, date) {
+// الحصول على المسار الصحيح للبيانات (تحت اسم الطبيب)
+function getDatabasePath() {
+    const datePath = getCurrentDatePath();
+    return `dental lap/case data/${datePath.fullPath}/${getDoctorKey()}`;
+}
+
+// الحصول على مسار الكاونتر الخاص بالطبيب
+function getCounterPath(doctorName, date) {
     const dateObj = new Date(date);
     const year = dateObj.getFullYear();
     const month = String(dateObj.getMonth() + 1).padStart(2, '0');
     const day = String(dateObj.getDate()).padStart(2, '0');
-    return `dental lap/case data/${year}/${month}/${day}/${clinicName}/_counters/${date}`;
+    return `dental lap/case data/${year}/${month}/${day}/${doctorName}/_counters/${date}`;
 }
 
 // دالة لجلب بيانات العيادة
@@ -504,47 +658,42 @@ async function saveOrderToWorkersPath(caseData, caseId, clinicData, secretCode) 
     }
 }
 
-// عرض الرقم التأكيدي في الواجهة
+// عرض الرقم التأكيدي مكان زر رفع السكان (في وسط منطقة الأسنان)
 function displaySecretCode(secretCode, randomCode) {
+    const teethContainer = document.getElementById('teethContainer');
+    if (!teethContainer) return;
+    // إخفاء زر رفع السكان وعرض شارة الرقم التأكيدي مكانه
+    const uploadBtn = document.getElementById('uploadScannerBtn');
+    if (uploadBtn) uploadBtn.style.display = 'none';
+
     let codeDisplay = document.getElementById('secretCodeDisplay');
     if (!codeDisplay) {
-        const infoBar = document.querySelector('.clinic-info-bar') || document.querySelector('.info-bar');
-        if (infoBar) {
-            const codeDiv = document.createElement('div');
-            codeDiv.id = 'secretCodeDisplay';
-            codeDiv.className = 'secret-code-display';
-            codeDiv.style.cssText = 'background: linear-gradient(135deg, #2e7d32, #1b5e20); color: #ffd700; padding: 8px 16px; border-radius: 40px; font-size: 18px; font-weight: bold; text-align: center; margin: 10px 0;';
-            infoBar.appendChild(codeDiv);
-        } else {
-            const container = document.querySelector('.dashboard-container') || document.body;
-            const newDiv = document.createElement('div');
-            newDiv.id = 'secretCodeDisplay';
-            newDiv.className = 'secret-code-display';
-            newDiv.style.cssText = 'background: linear-gradient(135deg, #2e7d32, #1b5e20); color: #ffd700; padding: 10px 20px; border-radius: 40px; font-size: 20px; font-weight: bold; text-align: center; margin: 10px 20px; position: fixed; top: 70px; right: 20px; z-index: 1000; box-shadow: 0 4px 15px rgba(0,0,0,0.3);';
-            newDiv.innerHTML = `🔐 الرقم التأكيدي: <span style="font-size: 24px; letter-spacing: 2px;">${randomCode}</span><br><small style="font-size: 12px;">${secretCode}</small>`;
-            container.appendChild(newDiv);
-            return;
-        }
+        codeDisplay = document.createElement('div');
+        codeDisplay.id = 'secretCodeDisplay';
+        codeDisplay.className = 'secret-code-badge';
+        teethContainer.appendChild(codeDisplay);
     }
-    if (codeDisplay) {
-        codeDisplay.innerHTML = `🔐 الرقم التأكيدي: <span style="font-size: 22px; letter-spacing: 3px; font-family: monospace;">${randomCode}</span><br><small style="font-size: 12px;">${secretCode}</small>`;
-        codeDisplay.style.display = 'block';
-    }
+    codeDisplay.innerHTML = `
+        <div class="scb-label">🔐 الرقم التأكيدي</div>
+        <div class="scb-code">${randomCode}</div>
+        <div class="scb-clinic">${secretCode}</div>
+    `;
+    codeDisplay.style.display = 'flex';
 }
 
-// إخفاء الرقم التأكيدي
+// إخفاء الرقم التأكيدي وإعادة زر الرفع
 function hideSecretCode() {
     const codeDisplay = document.getElementById('secretCodeDisplay');
-    if (codeDisplay) {
-        codeDisplay.style.display = 'none';
-    }
+    if (codeDisplay) codeDisplay.style.display = 'none';
+    const uploadBtn = document.getElementById('uploadScannerBtn');
+    if (uploadBtn) uploadBtn.style.display = '';
 }
 
 // تفعيل/تعطيل وضع القراءة فقط
 function setReadOnlyMode(readOnly) {
     isReadOnly = readOnly;
 
-    const inputs = ['patientName', 'notes', 'date', 'dailyCasesCount'];
+    const inputs = ['patientName', 'notes'];
     inputs.forEach(id => {
         const element = document.getElementById(id);
         if (element) {
@@ -610,7 +759,7 @@ async function checkIfCaseExists(patientName, date) {
     const year = dateObj.getFullYear();
     const month = String(dateObj.getMonth() + 1).padStart(2, '0');
     const day = String(dateObj.getDate()).padStart(2, '0');
-    const casesRef = database.ref(`dental lap/case data/${year}/${month}/${day}/${currentClinicName}`);
+    const casesRef = database.ref(`dental lap/case data/${year}/${month}/${day}/${getDoctorKey()}`);
     const snapshot = await casesRef.once('value');
     const cases = snapshot.val();
     if (!cases) return false;
@@ -703,50 +852,69 @@ function loadUserData() {
     }
     const user = JSON.parse(userData);
     currentUser = user;
-    currentClinicName = user.clinicName;
+    // اسم الطبيب أصبح المعرّف الأساسي (بدلاً من اسم العيادة)
+    currentClinicName = user.doctorName || user.clinicName || '';
     document.getElementById('welcomeMessage').innerHTML = `مرحباً د. ${user.doctorName || "الطبيب"} 👋`;
-    document.getElementById('clinicSubtitle').innerHTML = `عيادة: ${user.clinicName || "غير محدد"} | نظام متقدم`;
+    const subtitle = `${user.governorate || ''}${user.area ? ' - ' + user.area : ''}`.trim();
+    document.getElementById('clinicSubtitle').innerHTML = subtitle ? `📍 ${subtitle} | نظام متقدم` : 'نظام متقدم';
     return user;
 }
 
-// شريط التقدم الذكي
-function simulateSmartProgress() {
-    return new Promise((resolve) => {
-        const progressBar = document.getElementById('uploadProgressBar');
-        const progressFill = document.getElementById('progressFill');
-        const progressText = document.getElementById('progressText');
-        const progressStatus = document.getElementById('progressStatus');
+// عرض / تحديث / إخفاء شريط التقدم
+function showProgressBar() {
+    const bar = document.getElementById('uploadProgressBar');
+    if (bar) bar.style.display = 'block';
+    setProgress(0, '📦 جاري التحضير...');
+}
+function setProgress(percent, statusText) {
+    const fill   = document.getElementById('progressFill');
+    const text   = document.getElementById('progressText');
+    const status = document.getElementById('progressStatus');
+    const p = Math.max(0, Math.min(100, percent));
+    if (fill)   fill.style.width = `${p}%`;
+    if (text)   text.textContent = `${Math.floor(p)}%`;
+    if (status && statusText) status.textContent = statusText;
+}
+function hideProgressBar(delayMs = 1200) {
+    const bar = document.getElementById('uploadProgressBar');
+    setTimeout(() => { if (bar) bar.style.display = 'none'; }, delayMs);
+}
 
-        progressBar.style.display = 'block';
-        let progress = 0;
+// رفع ملف فعلي إلى Firebase Storage مع تتبع نسبة التقدم الحقيقية
+function uploadFileToStorage(file, storagePath) {
+    return new Promise((resolve, reject) => {
+        const fileRef  = storage.ref().child(storagePath);
+        const uploadTask = fileRef.put(file);
 
-        const interval = setInterval(() => {
-            let increment, statusText;
-            if (progress < 25) { increment = Math.random() * 3 + 2; statusText = '📦 جاري استلام الملفات... 🚀'; }
-            else if (progress < 50) { increment = Math.random() * 2 + 1.5; statusText = '🔍 جاري معالجة الملفات... ⚡'; }
-            else if (progress < 75) { increment = Math.random() * 1.5 + 1; statusText = '⚙️ جاري التحميل والتجهيز... 🐢'; }
-            else if (progress < 90) { increment = Math.random() * 0.8 + 0.5; statusText = '🎯 المراحل النهائية... ⏳'; }
-            else { increment = Math.random() * 0.4 + 0.2; statusText = '✨ يوشك على الانتهاء... 💫'; }
-
-            progress = Math.min(progress + increment, 100);
-            progressFill.style.width = `${progress}%`;
-            progressText.textContent = `${Math.floor(progress)}%`;
-            progressStatus.textContent = statusText;
-
-            if (progress >= 100) {
-                clearInterval(interval);
-                progressStatus.textContent = '✅ اكتمل التحميل بنجاح! 🎉';
-                progressText.textContent = '100%';
-                setTimeout(() => {
-                    progressBar.style.display = 'none';
-                    resolve();
-                }, 1000);
+        showProgressBar();
+        uploadTask.on('state_changed',
+            (snapshot) => {
+                const pct = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                let statusText;
+                if (pct < 25)      statusText = '📦 جاري بدء الرفع...';
+                else if (pct < 60) statusText = '🚚 جاري رفع الملف إلى السيرفر...';
+                else if (pct < 95) statusText = '⚙️ يوشك على الانتهاء...';
+                else               statusText = '✨ اللمسات الأخيرة...';
+                setProgress(pct, statusText);
+            },
+            (error) => {
+                setProgress(0, '❌ فشل الرفع');
+                hideProgressBar(1500);
+                reject(error);
+            },
+            async () => {
+                try {
+                    const url = await uploadTask.snapshot.ref.getDownloadURL();
+                    setProgress(100, '✅ اكتمل الرفع بنجاح! 🎉');
+                    hideProgressBar();
+                    resolve({ url, path: storagePath });
+                } catch (e) { reject(e); }
             }
-        }, 150);
+        );
     });
 }
 
-// رفع الملف
+// زر رفع الملف: لو الحالة محفوظة بالفعل يرفع فوراً، وإلا يخزن الملف مؤقتاً ويُرفع عند الحفظ
 async function uploadScannerFile() {
     if (isReadOnly) { alert("🔒 لا يمكن رفع ملف في وضع القراءة فقط!"); return; }
 
@@ -758,29 +926,30 @@ async function uploadScannerFile() {
     fileInput.accept = '.zip,.rar,.7z,.pdf,.jpg,.png';
     fileInput.click();
 
-    fileInput.addEventListener('change', async (event) => {
+    fileInput.addEventListener('change', async () => {
         if (fileInput.files.length === 0) return;
         const file = fileInput.files[0];
-        uploadedFileName = file.name;
-        alert(`📎 تم اختيار الملف: ${file.name}\nسيتم رفعه ومعالجته...`);
-        await simulateSmartProgress();
+        uploadedFileName  = file.name;
+        pendingUploadFile = file;
 
         if (currentCaseId) {
             try {
-                const fileRef = storage.ref().child(`scans/${currentClinicName}/${currentCaseId}/${file.name}`);
-                await fileRef.put(file);
+                const path = `scans/${currentClinicName}/${currentCaseId}/${file.name}`;
+                const { url } = await uploadFileToStorage(file, path);
                 await database.ref(`${getDatabasePath()}/${currentCaseId}`).update({
-                    scannerFile: file.name,
-                    scannerFileUrl: await fileRef.getDownloadURL(),
-                    scannerUploadedAt: firebase.database.ServerValue.TIMESTAMP
+                    scannerFile:        file.name,
+                    scannerFileUrl:     url,
+                    scannerStoragePath: path,
+                    scannerUploadedAt:  firebase.database.ServerValue.TIMESTAMP
                 });
-                alert(`✅ تم رفع الملف بنجاح!`);
+                pendingUploadFile = null;
+                alert(`✅ تم رفع الملف بنجاح وربطه بالحالة!`);
             } catch (error) {
                 console.error("خطأ:", error);
-                alert("❌ حدث خطأ في رفع الملف");
+                alert("❌ حدث خطأ في رفع الملف: " + (error?.message || error));
             }
         } else {
-            alert(`✅ تم تجهيز الملف: ${file.name}\n💾 سيتم حفظ الملف مع الحالة عند الضغط على "حفظ الحالة"`);
+            alert(`📎 تم اختيار الملف: ${file.name}\n💾 سيتم رفعه تلقائياً عند الضغط على "حفظ الحالة"`);
         }
     });
 }
@@ -788,15 +957,19 @@ async function uploadScannerFile() {
 // تحديث شريط الحالة
 function updateStatusBar(status) {
     currentOrderStatus = status;
-    const steps = document.querySelectorAll('.status-step');
-    const progressLine = document.querySelector('.progress-line');
+    const steps    = document.querySelectorAll('.status-step');
+    const fillLine = document.getElementById('progressLineFill');
     steps.forEach((step, index) => {
         const stepNum = index + 1;
         step.classList.remove('active', 'completed');
-        if (stepNum < status) step.classList.add('completed');
+        if (stepNum < status)       step.classList.add('completed');
         else if (stepNum === status) step.classList.add('active');
     });
-    progressLine.style.width = `${((status - 1) / 3) * 100}%`;
+    // النسبة بين الخطوات الأربع: 0%، 33%، 66%، 100%
+    if (fillLine) {
+        const pct = status <= 1 ? 0 : ((status - 1) / 3) * 100;
+        fillLine.style.width = `${pct}%`;
+    }
 }
 
 function updateStepDates(statusHistory) {
@@ -861,23 +1034,27 @@ async function saveCaseToFirebase() {
     if (!patientName) { alert("⚠️ الرجاء إدخال اسم المريض أولاً!"); return false; }
 
     const notes = document.getElementById('notes').value.trim();
-    const date = document.getElementById('date').value.trim();
-    const dailyCasesCount = document.getElementById('dailyCasesCount').value.trim();
-    if (!date) { alert("⚠️ الرجاء إدخال التاريخ!"); return false; }
+
+    // التاريخ يتم حسابه تلقائياً من تاريخ اليوم
+    const today = new Date();
+    const date  = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
     if (Object.keys(toothTreatments).length === 0) { alert("⚠️ الرجاء تحديد الأسنان والعلاجات أولاً!"); return false; }
+
+    const doctorKey = getDoctorKey();
 
     const exists = await checkIfCaseExists(patientName, date);
     if (exists) { alert("⚠️ لا يمكن حفظ الحالة! يوجد حالة سابقة بنفس اسم المريض والتاريخ.\n\n🔒 تم تحويل هذه الحالة للقراءة فقط."); await loadExistingCase(patientName, date); return false; }
 
-    // الحصول على العداد اليومي
-    const counter = await getDailyCounterAndReturn(currentClinicName, date);
+    // الحصول على العداد اليومي (تحت اسم الطبيب)
+    const counter = await getDailyCounterAndReturn(doctorKey, date);
 
     // توليد الرقم التأكيدي الجديد (بدون أصفار)
     const secretCodeV2 = await generateSecretCodeV2(currentClinicName, date, counter);
     currentSecretCode = secretCodeV2;
 
-    // توليد caseId
-    const caseId = `${patientName}_${date}_${counter}`;
+    // توليد caseId بصيغة: اسم المريض-الرقم اليومي (مثال: يوسف-1)
+    const caseId = `${patientName}-${counter}`;
     currentCaseId = caseId;
 
     const now = Date.now();
@@ -894,7 +1071,6 @@ async function saveCaseToFirebase() {
         patientName, 
         notes, 
         date, 
-        dailyCasesCount: dailyCasesCount || "0",
         toothTreatments, 
         toothConnections, 
         orderStatus: finalOrderStatus, 
@@ -902,7 +1078,7 @@ async function saveCaseToFirebase() {
         createdAt: firebase.database.ServerValue.TIMESTAMP, 
         timestamp: new Date().toLocaleString('ar-EG'),
         clinicName: currentClinicName, 
-        doctorName: currentUser.doctorName || "غير محدد", 
+        doctorName: doctorKey, 
         isReadOnly: true,
         year: datePath.year, 
         month: datePath.month, 
@@ -911,11 +1087,27 @@ async function saveCaseToFirebase() {
     if (uploadedFileName) { caseData.scannerFile = uploadedFileName; caseData.scannerUploadedAt = now; }
 
     try {
-        // 1. حفظ البيانات الأساسية
+        // رفع الملف المعلّق (لو الطبيب اختار ملف قبل الحفظ) إلى Firebase Storage وربطه بالحالة
+        if (pendingUploadFile) {
+            try {
+                const storagePath = `scans/${currentClinicName}/${caseId}/${pendingUploadFile.name}`;
+                const { url } = await uploadFileToStorage(pendingUploadFile, storagePath);
+                caseData.scannerFile        = pendingUploadFile.name;
+                caseData.scannerFileUrl     = url;
+                caseData.scannerStoragePath = storagePath;
+                caseData.scannerUploadedAt  = now;
+                pendingUploadFile = null;
+            } catch (uploadErr) {
+                console.error('فشل رفع الملف المرفق:', uploadErr);
+                alert('⚠️ تم حفظ الحالة لكن فشل رفع ملف السكان. يمكنك إعادة المحاولة.');
+            }
+        }
+
+        // 1. حفظ البيانات الأساسية تحت مسار الطبيب
         await database.ref(`${getDatabasePath()}/${caseId}`).set(caseData);
 
-        // 2. حفظ الرقم التأكيدي في الفهرس (المفتاح = الرقم التأكيدي، القيمة = caseId)
-        await saveToSecretCodeIndex(secretCodeV2, caseId);
+        // 2. حفظ الفهارس: العام (اسم المريض → الرقم التأكيدي) و المفصل
+        await saveToSecretCodeIndex(secretCodeV2, caseId, patientName, datePath, doctorKey);
 
         // 3. جلب بيانات العيادة
         const clinicData = await getClinicData(currentClinicName);
@@ -956,7 +1148,7 @@ async function loadExistingCase(patientName, date) {
     const year = dateObj.getFullYear();
     const month = String(dateObj.getMonth() + 1).padStart(2, '0');
     const day = String(dateObj.getDate()).padStart(2, '0');
-    const snapshot = await database.ref(`dental lap/case data/${year}/${month}/${day}/${currentClinicName}`).once('value');
+    const snapshot = await database.ref(`dental lap/case data/${year}/${month}/${day}/${getDoctorKey()}`).once('value');
     const cases = snapshot.val();
     if (!cases) return;
     for (const caseId in cases) {
@@ -974,8 +1166,16 @@ function loadCaseToDashboard(caseData) {
 
     document.getElementById('patientName').value = caseData.patientName || '';
     document.getElementById('notes').value = caseData.notes || '';
-    document.getElementById('date').value = caseData.date || '';
-    document.getElementById('dailyCasesCount').value = caseData.dailyCasesCount || '';
+
+    // استرجاع محادثة الذكاء الاصطناعي الخاصة بهذه الحالة فقط
+    let convo = caseData.conversation || [];
+    if (convo && !Array.isArray(convo)) {
+        // فايربيز قد يحوّل المصفوفة إلى كائن — نُعيدها لمصفوفة
+        convo = Object.keys(convo).sort((a,b) => Number(a)-Number(b)).map(k => convo[k]);
+    }
+    currentConversation = convo;
+    rebuildAiMessagesUI(currentConversation);
+
     toothTreatments = caseData.toothTreatments || {};
     toothConnections = caseData.toothConnections || {};
 
@@ -1070,7 +1270,7 @@ function showCaseDetails(caseData) {
 
 async function showCasesRecords() {
     const datePath = getCurrentDatePath();
-    const snapshot = await database.ref(`dental lap/case data/${datePath.year}/${datePath.month}/${datePath.day}/${currentClinicName}`).once('value');
+    const snapshot = await database.ref(`dental lap/case data/${datePath.year}/${datePath.month}/${datePath.day}/${getDoctorKey()}`).once('value');
     const cases = snapshot.val();
     if (!cases || Object.keys(cases).length === 0) { alert("📭 لا توجد حالات مسجلة لليوم الحالي"); return; }
 
@@ -1122,7 +1322,6 @@ function resetForm() {
 
     document.getElementById('patientName').value = '';
     document.getElementById('notes').value = '';
-    document.getElementById('dailyCasesCount').value = '';
     document.querySelectorAll('.tooth-button').forEach(btn => {
         btn.classList.remove('zircon', 'porcelain', 'pontic', 'healthy', 'selected');
         btn.style.background = '';
@@ -1136,6 +1335,7 @@ function resetForm() {
     currentTreatment = null;
     currentCaseId = null;
     uploadedFileName = null;
+    pendingUploadFile = null;
     currentOrderStatus = 1;
     currentSecretCode = null;
     updateStatusBar(1);
@@ -1143,9 +1343,6 @@ function resetForm() {
     updateSelectedCount();
     hideSecretCode();
     setReadOnlyMode(false);
-
-    const today = new Date();
-    document.getElementById('date').value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
     // Reset AI conversation
     currentConversation = [];
@@ -1245,10 +1442,15 @@ function initAdvancedDentalSystem() {
         button.addEventListener('pointerdown', (e) => {
             if (isReadOnly) return;
             const treatment = toothTreatments[number];
-            if (!treatment) return;
             pressTimer = setTimeout(() => {
                 pressTimer = null;
-                startTreatmentDrag(e, number, treatment);
+                if (treatment) {
+                    // ضغط مطوّل على سن عليه علاج → نسخ العلاج لسن آخر
+                    startTreatmentDrag(e, number, treatment);
+                } else {
+                    // ضغط مطوّل على سن فارغ → سحب وضع الإفراغ لإزالة علاج سن آخر
+                    startClearDrag(e);
+                }
             }, 600);
         });
         button.addEventListener('pointerup', () => { clearTimeout(pressTimer); pressTimer = null; });
@@ -1284,10 +1486,6 @@ function initAdvancedDentalSystem() {
     });
 
     setTimeout(() => addConnectionDots(), 100);
-    if (!document.getElementById('date').value) {
-        const today = new Date();
-        document.getElementById('date').value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-    }
 
     document.addEventListener('pointermove', handleDragMove);
     document.addEventListener('pointerup', handleDragEnd);
@@ -1379,7 +1577,7 @@ async function handleChangeSomething(changeType, changeValue, patientName) {
         const caseRef = database.ref(`${getDatabasePath()}/${currentCaseId}`);
         const updateData = { lastModified: Date.now(), lastModifiedBy: 'customer_service' };
         switch(changeType) {
-            case 'date': updateData.date = changeValue; document.getElementById('date').value = changeValue; break;
+            case 'date': updateData.date = changeValue; break;
             case 'notes':
                 const currentNotes = document.getElementById('notes').value;
                 updateData.notes = `[تعديل - ${new Date().toLocaleString('ar-EG')}] ${changeValue}\n${currentNotes}`;
