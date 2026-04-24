@@ -101,19 +101,45 @@ body {
   align-items: center;
   justify-content: center;
   font-size: 1.1rem;
-  transition: all 0.3s;
+  transition: all 0.45s cubic-bezier(.2,.9,.3,1.4);
+  transform: scale(1);
 }
 
 .status-step.active .step-icon {
   border-color: #ffd700;
-  background: rgba(255, 215, 0, 0.12);
-  box-shadow: 0 0 14px rgba(255,215,0,0.4);
+  background: rgba(255, 215, 0, 0.18);
+  box-shadow: 0 0 18px rgba(255,215,0,0.55);
+  transform: scale(1.18);
+  animation: stepPulse 1.8s ease-in-out infinite;
+}
+
+@keyframes stepPulse {
+  0%,100% { box-shadow: 0 0 18px rgba(255,215,0,0.55); }
+  50%     { box-shadow: 0 0 28px rgba(255,215,0,0.95); }
 }
 
 .status-step.completed .step-icon {
   border-color: #4caf50;
-  background: rgba(76,175,80,0.15);
-  box-shadow: 0 0 10px rgba(76,175,80,0.35);
+  background: rgba(76,175,80,0.22);
+  box-shadow: 0 0 14px rgba(76,175,80,0.55);
+  color: #fff;
+}
+
+.status-step.completed .step-icon::after {
+  content: '✓';
+  position: absolute;
+  font-size: 0.85rem;
+  color: #4caf50;
+  background: #0d0d1a;
+  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  line-height: 16px;
+  text-align: center;
+  bottom: -2px;
+  left: -2px;
+  border: 1.5px solid #4caf50;
+  font-weight: 900;
 }
 
 .step-title {
@@ -121,8 +147,9 @@ body {
   color: #78909c;
   text-align: center;
   font-weight: 600;
+  transition: color 0.3s;
 }
-.status-step.active .step-title   { color: #ffd700; }
+.status-step.active .step-title    { color: #ffd700; font-weight: 800; }
 .status-step.completed .step-title { color: #4caf50; }
 
 .step-date {
@@ -131,14 +158,39 @@ body {
   margin-top: 2px;
 }
 
+/* خط التقدم الخلفي + خط التعبئة المتحرك */
 .progress-line {
   position: absolute;
   top: 20px;
   right: 40px;
   left: 40px;
-  height: 2px;
+  height: 4px;
   background: #2a2a3a;
+  border-radius: 4px;
   z-index: 1;
+  overflow: hidden;
+}
+.progress-line-fill {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 0%;
+  background: linear-gradient(90deg, #4caf50, #8bc34a, #ffd700);
+  border-radius: 4px;
+  transition: width 0.7s cubic-bezier(.4,1.3,.4,1);
+  box-shadow: 0 0 8px rgba(76,175,80,0.6);
+}
+.progress-line-fill::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.45), transparent);
+  animation: lineShimmer 2s infinite;
+}
+@keyframes lineShimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
 }
 
 /* ===== Main Content — 3 Cards ===== */
@@ -368,6 +420,36 @@ body {
 }
 .upload-scanner-btn .icon { font-size: 24px; }
 .upload-scanner-btn .text { font-size: 14px; font-weight: 700; color: white; }
+
+/* ===== Secret Code Badge (يظهر مكان زر الرفع بعد حفظ الحالة) ===== */
+.secret-code-badge {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: linear-gradient(135deg, #2e7d32, #1b5e20);
+  color: #ffd700;
+  padding: 14px 26px;
+  border-radius: 18px;
+  text-align: center;
+  z-index: 30;
+  border: 2px solid #ffd700;
+  box-shadow: 0 0 24px rgba(255,215,0,0.45), 0 8px 28px rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  animation: badgePop 0.55s cubic-bezier(.2,.9,.3,1.6);
+  min-width: 180px;
+}
+@keyframes badgePop {
+  0%   { transform: translate(-50%, -50%) scale(0.4); opacity: 0; }
+  70%  { transform: translate(-50%, -50%) scale(1.12); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(1); }
+}
+.scb-label  { font-size: 12px; color: #c8e6c9; font-weight: 700; }
+.scb-code   { font-size: 28px; font-weight: 900; letter-spacing: 4px; font-family: monospace; color: #ffd700; text-shadow: 0 0 10px rgba(255,215,0,0.6); }
+.scb-clinic { font-size: 11px; color: #a5d6a7; font-weight: 600; }
 
 /* ===== Upload Progress Bar ===== */
 .upload-progress-bar {
