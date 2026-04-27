@@ -58,16 +58,38 @@
                     <label>📝 الملاحظات</label>
                     <textarea id="notes" placeholder="الملاحظات الطبية ..." rows="3"></textarea>
                 </div>
-                <div class="action-buttons">
-                    <button class="primary-btn" id="saveBtnDashboard">💾 حفظ الحالة</button>
-                    <button class="primary-btn secondary-btn" id="newBtnDashboard">✨ جديد</button>
+                <div class="action-buttons three-cols">
+                    <button class="primary-btn" id="saveBtnDashboard">💾 حفظ</button>
                     <button class="primary-btn record-btn" id="recordBtnDashboard">📋 السجل</button>
-                    <button class="primary-btn" id="customerServiceBtn">🤖 خدمة العملاء</button>
+                    <button class="primary-btn secondary-btn" id="newBtnDashboard">✨ جديد</button>
                 </div>
-                <div class="info-text">
-                    💡 حدد السن أولاً ثم اختر العلاج<br>
-                    📎 يمكنك رفع ملف السكان قبل الحفظ (اختياري)
+
+                <!-- ── الفاتورة الإجمالية للطبيب ── -->
+                <div class="doctor-invoice" id="doctorInvoice">
+                    <div class="di-header">
+                        <span class="di-title">💼 الفاتورة الإجمالية</span>
+                        <span class="di-cases" id="diCases">0 حالة</span>
+                    </div>
+                    <div class="di-amount">
+                        <span id="diTotal">0</span>
+                        <span class="di-currency">ج.م</span>
+                    </div>
                 </div>
+
+                <!-- ── ملخّص العلاجات المختارة ── -->
+                <div class="treatments-summary" id="treatmentsSummary">
+                    <div class="ts-header">
+                        <span>🧾 العلاجات المحددة</span>
+                        <span class="ts-count" id="tsCount">0</span>
+                    </div>
+                    <div class="ts-list" id="treatmentsSummaryList">
+                        <div class="ts-empty">لا توجد علاجات بعد — اختر سنّاً وحدّد علاجه.</div>
+                    </div>
+                    <div class="ts-total">
+                        المجموع: <span id="treatmentsTotalPrice">0</span> ج.م
+                    </div>
+                </div>
+
             </div>
 
             <!-- ── Middle Card : Teeth + AI Bar ── -->
@@ -86,11 +108,14 @@
                     </div>
                 </div>
 
-                <!-- AI Quick-Ask Bar -->
-                <div class="ai-bar">
+                <!-- AI Quick-Ask Bar (يظهر فقط بعد حفظ الحالة) -->
+                <div class="ai-bar" id="aiBarWrap" style="display:none;">
                     <input type="text" id="aiChatInput" class="ai-bar-input"
-                           placeholder="إسأل الذكاء الاصطناعي...">
+                           placeholder="إسأل الذكاء الاصطناعي عن هذه الحالة...">
                     <button id="aiChatBtn" class="ai-bar-btn">🤖 إرسال</button>
+                </div>
+                <div class="ai-bar-locked" id="aiBarLocked">
+                    🔒 احفظ الحالة أولاً لتفعيل المساعد الذكي
                 </div>
             </div>
 
