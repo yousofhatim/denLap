@@ -178,7 +178,7 @@ async function fetchDoctorDataForAi() {
     const doctorKey = (typeof getDoctorKey === 'function') ? getDoctorKey() : (currentUser?.doctorName || currentClinicName);
     if (!doctorKey) return null;
     try {
-        const snap = await database.ref(`dental lap/data/${doctorKey}`).once('value');
+        const snap = await database.ref(`dental lap/users/doctors/data/${doctorKey}`).once('value');
         return snap.val();
     } catch (e) { console.error('fetchDoctorDataForAi error:', e); return null; }
 }
@@ -240,7 +240,7 @@ async function sendAiMessage() {
             if (doctorData.governorate) dlines.push(`المحافظة: ${doctorData.governorate}`);
             if (doctorData.area)        dlines.push(`المنطقة: ${doctorData.area}`);
             if (doctorData.location)    dlines.push(`الموقع: ${doctorData.location}`);
-            doctorBlock = `\n\n=== بيانات الطبيب (من dental lap/data/${doctorData.doctorName}) ===\n${dlines.join('\n')}\n=== نهاية بيانات الطبيب ===`;
+            doctorBlock = `\n\n=== بيانات الطبيب (من dental lap/users/doctors/data/${doctorData.doctorName}) ===\n${dlines.join('\n')}\n=== نهاية بيانات الطبيب ===`;
         }
 
         let caseBlock = '';
@@ -672,7 +672,7 @@ function handleDragEnd(e) {
 // دالة لجلب clinicId من بيانات العيادة
 async function getClinicId(clinicName) {
     try {
-        const clinicRef = database.ref(`dental lap/data/${clinicName}/clinicId`);
+        const clinicRef = database.ref(`dental lap/users/doctors/data/${clinicName}/clinicId`);
         const snapshot = await clinicRef.once('value');
         let clinicId = snapshot.val();
 
@@ -683,7 +683,7 @@ async function getClinicId(clinicName) {
             } else {
                 clinicId = Math.abs(clinicName.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) % 900 + 100).toString();
             }
-            await database.ref(`dental lap/data/${clinicName}/clinicId`).set(clinicId);
+            await database.ref(`dental lap/users/doctors/data/${clinicName}/clinicId`).set(clinicId);
         }
         return clinicId.toString();
     } catch (error) {
@@ -779,7 +779,7 @@ function getCounterPath(doctorName, date) {
 // دالة لجلب بيانات العيادة
 async function getClinicData(clinicName) {
     try {
-        const clinicRef = database.ref(`dental lap/data/${clinicName}`);
+        const clinicRef = database.ref(`dental lap/users/doctors/data/${clinicName}`);
         const snapshot = await clinicRef.once('value');
         const clinicData = snapshot.val();
 
@@ -810,31 +810,16 @@ async function saveOrderToWorkersPath(caseData, caseId, clinicData, secretCode) 
 
         const workersPath = `dental lap/workers/data/مندوب/orders/${cleanClinicName}_${cleanGovernorate}_${cleanArea}/${caseId}`;
 
+        // بيانات إرشادية فقط — تدلّ المندوب على موقع الحالة في المسار الرئيسي
+        // dental lap/case data/{year}/{month}/{day}/{doctorName}/{caseId}
+        const dp = getCurrentDatePath();
         const orderData = {
-            caseId: caseId,
-            secretCode: currentClinicName,
-            randomCode: secretCode,
-            patientName: caseData.patientName,
-            clinicName: currentClinicName,
-            clinicNameClean: cleanClinicName,
-            governorate: clinicData?.governorate || "",
-            area: clinicData?.area || "",
+            caseId,
+            year:       dp.year,
+            month:      dp.month,
+            day:        dp.day,
             doctorName: clinicData?.doctorName || currentUser?.doctorName || "غير محدد",
-            clinicPhone: clinicData?.clinicNumber || "",
-            clinicLocation: clinicData?.location || "",
-            notes: caseData.notes,
-            date: caseData.date,
-            toothTreatments: caseData.toothTreatments,
-            toothConnections: caseData.toothConnections,
-            orderStatus: caseData.orderStatus,
-            statusHistory: caseData.statusHistory,
-            hasScannerFile: !!(caseData.scannerFile),
-            createdAt: firebase.database.ServerValue.TIMESTAMP,
-            timestamp: new Date().toLocaleString('ar-EG'),
-            isReadOnly: true,
-            year: getCurrentDatePath().year,
-            month: getCurrentDatePath().month,
-            day: getCurrentDatePath().day
+            randomCode: secretCode,
         };
 
         await database.ref(workersPath).set(orderData);
@@ -847,7 +832,8 @@ async function saveOrderToWorkersPath(caseData, caseId, clinicData, secretCode) 
 }
 
 // عرض الرقم التأكيدي مكان زر رفع السكان (في وسط منطقة الأسنان)
-function displaySecretCode(secretCode, randomCode) {
+// ترتيب الشارة: اسم المريض (كبير وفوق) → ثم الرقم التأكيدي تحته
+function displaySecretCode(patientName, randomCode) {
     const teethContainer = document.getElementById('teethContainer');
     if (!teethContainer) return;
     // إخفاء زر رفع السكان وعرض شارة الرقم التأكيدي مكانه
@@ -862,9 +848,9 @@ function displaySecretCode(secretCode, randomCode) {
         teethContainer.appendChild(codeDisplay);
     }
     codeDisplay.innerHTML = `
+        <div class="scb-patient">👤 ${escapeHtml(patientName || '')}</div>
         <div class="scb-label">🔐 الرقم التأكيدي</div>
-        <div class="scb-code">${randomCode}</div>
-        <div class="scb-clinic">${secretCode}</div>
+        <div class="scb-code">${escapeHtml(randomCode || '')}</div>
     `;
     codeDisplay.style.display = 'flex';
 }
@@ -970,66 +956,9 @@ async function getDailyCounterAndReturn(clinicName, date) {
     return counter;
 }
 
-// حفظ الحالة في كولكشن الزيركون أو البورسلين
-async function saveToTreatmentCollection(caseData, caseId, treatmentType) {
-    try {
-        let collectionPath = '';
-        if (treatmentType === 'zircon') {
-            collectionPath = `dental lap/case type/zircon/${caseId}`;
-        } else if (treatmentType === 'porcelain') {
-            collectionPath = `dental lap/case type/porcelain/${caseId}`;
-        } else {
-            return;
-        }
-
-        const treatmentCaseData = {
-            caseId: caseId,
-            secretCode: caseData.secretCode,
-            randomCode: caseData.randomCode,
-            patientName: caseData.patientName,
-            clinicName: currentClinicName,
-            doctorName: currentUser.doctorName || "غير محدد",
-            treatmentType: treatmentType,
-            toothTreatments: caseData.toothTreatments,
-            toothConnections: caseData.toothConnections,
-            notes: caseData.notes,
-            date: caseData.date,
-            orderStatus: caseData.orderStatus,
-            statusHistory: caseData.statusHistory,
-            scannerFile: caseData.scannerFile || null,
-            createdAt: firebase.database.ServerValue.TIMESTAMP,
-            timestamp: new Date().toLocaleString('ar-EG'),
-            clinicRef: `${getDatabasePath()}/${caseId}`,
-            isReadOnly: true,
-            year: getCurrentDatePath().year,
-            month: getCurrentDatePath().month,
-            day: getCurrentDatePath().day
-        };
-
-        await database.ref(collectionPath).set(treatmentCaseData);
-        return true;
-    } catch (error) {
-        console.error("خطأ في حفظ الكولكشن:", error);
-        return false;
-    }
-}
-
-// تحديث الحالة في الكولكشن
-async function updateTreatmentCollectionStatus(caseId, newStatus, statusHistory) {
-    if (isReadOnly) return;
-    try {
-        const zirconRef = database.ref(`dental lap/case type/zircon/${caseId}`);
-        if ((await zirconRef.once('value')).exists()) {
-            await zirconRef.update({ orderStatus: newStatus, statusHistory: statusHistory, lastStatusUpdate: Date.now() });
-        }
-        const porcelainRef = database.ref(`dental lap/case type/porcelain/${caseId}`);
-        if ((await porcelainRef.once('value')).exists()) {
-            await porcelainRef.update({ orderStatus: newStatus, statusHistory: statusHistory, lastStatusUpdate: Date.now() });
-        }
-    } catch (error) {
-        console.error("خطأ في تحديث الكولكشن:", error);
-    }
-}
+// تم حذف مسار "dental lap/case type" نهائياً (المسار الصحيح داخل case data).
+// المسار البديل المعتمد للفئات هو:
+//   dental lap/case data/case type/{branch}/{caseId} = { year, month, day, doctorName }  (مجرد مؤشر)
 
 // تحميل بيانات المستخدم
 function loadUserData() {
@@ -1195,7 +1124,6 @@ async function updateOrderStatus(newStatus) {
             const statusHistory = caseData.statusHistory || {};
             statusHistory[newStatus] = now;
             await caseRef.update({ orderStatus: newStatus, statusHistory: statusHistory, lastStatusUpdate: now });
-            await updateTreatmentCollectionStatus(currentCaseId, newStatus, statusHistory);
             currentOrderStatus = newStatus;
             updateStatusBar(newStatus);
             updateStepDates(statusHistory);
@@ -1241,8 +1169,8 @@ function calcCaseTotalPrice(treatmentsMap) {
 }
 
 // حفظ فاتورة حالة واحدة وتحديث إجمالي فاتورة الطبيب
-// المسار: dental lap/data/{doctorName}/invoices/{caseId}
-//         dental lap/data/{doctorName}/invoiceTotal = { amount, casesCount, lastUpdate }
+// المسار: dental lap/users/doctors/data/{doctorName}/invoices/{caseId}
+//         dental lap/users/doctors/data/{doctorName}/invoiceTotal = { amount, casesCount, lastUpdate }
 async function saveCaseInvoice(caseData, caseId) {
     const doctorKey = getDoctorKey();
     if (!doctorKey || doctorKey === 'unknown') return 0;
@@ -1263,21 +1191,22 @@ async function saveCaseInvoice(caseData, caseId) {
     const total = items.reduce((s, it) => s + (it.price || 0), 0);
     const cats  = collectCaseCategories(caseData.toothTreatments || {});
 
+    const dp = getCurrentDatePath();
     const invoiceEntry = {
         caseId,
         patientName: caseData.patientName,
-        date: caseData.date,
-        timestamp: caseData.timestamp,
+        date: `${dp.year}/${dp.month}/${dp.day}`,
+        timestamp: new Date().toLocaleString('ar-EG'),
         category: cats[0] || null,
         items,
         total,
     };
 
     // 1) حفظ فاتورة الحالة
-    await database.ref(`dental lap/data/${doctorKey}/invoices/${caseId}`).set(invoiceEntry);
+    await database.ref(`dental lap/users/doctors/data/${doctorKey}/invoices/${caseId}`).set(invoiceEntry);
 
     // 2) تحديث الإجمالي عبر transaction (لمنع تعارض)
-    const totalRef = database.ref(`dental lap/data/${doctorKey}/invoiceTotal`);
+    const totalRef = database.ref(`dental lap/users/doctors/data/${doctorKey}/invoiceTotal`);
     await totalRef.transaction(curr => {
         const c = curr || { amount: 0, casesCount: 0 };
         c.amount     = (c.amount || 0) + total;
@@ -1296,7 +1225,7 @@ async function loadDoctorInvoice(animateBump = false) {
     const doctorKey = getDoctorKey();
     if (!doctorKey || doctorKey === 'unknown') return;
     try {
-        const snap = await database.ref(`dental lap/data/${doctorKey}/invoiceTotal`).once('value');
+        const snap = await database.ref(`dental lap/users/doctors/data/${doctorKey}/invoiceTotal`).once('value');
         const data = snap.val() || { amount: 0, casesCount: 0 };
         updateDoctorInvoiceUI(data.amount || 0, data.casesCount || 0, animateBump);
     } catch (e) {
@@ -1410,25 +1339,19 @@ async function saveCaseToFirebase() {
 
     const datePath = getCurrentDatePath();
 
+    // ✦ المسار الرئيسي: dental lap/case data/{year}/{month}/{day}/{doctorName}/{caseId}
+    //   لا نكرر الحقول التي يمكن استخراجها من المسار نفسه
+    //   (clinicName / createdAt / date / day / doctorName / month / secretCode / timestamp / year)
     const caseData = {
-        caseId, 
-        secretCode: currentClinicName,
+        caseId,
         randomCode: secretCodeV2,
-        patientName, 
-        notes, 
-        date, 
-        toothTreatments, 
-        toothConnections, 
-        orderStatus: finalOrderStatus, 
+        patientName,
+        notes,
+        toothTreatments,
+        toothConnections,
+        orderStatus: finalOrderStatus,
         statusHistory,
-        createdAt: firebase.database.ServerValue.TIMESTAMP, 
-        timestamp: new Date().toLocaleString('ar-EG'),
-        clinicName: currentClinicName, 
-        doctorName: doctorKey, 
         isReadOnly: true,
-        year: datePath.year, 
-        month: datePath.month, 
-        day: datePath.day
     };
     if (uploadedFileName) { caseData.scannerFile = uploadedFileName; caseData.scannerUploadedAt = now; }
 
@@ -1449,73 +1372,69 @@ async function saveCaseToFirebase() {
             }
         }
 
-        // 1. حفظ البيانات الأساسية تحت مسار الطبيب
+        // 1. حساب إجمالي الحالة (المبلغ المطلوب) ثم تضمين بيانات الدفع داخل الحالة الرئيسية
+        const computedTotal = calcCaseTotalPrice(toothTreatments);
+        caseData.total           = computedTotal;
+        caseData.paidAmount      = 0;
+        caseData.remainingAmount = computedTotal;
+        caseData.isPaid          = computedTotal === 0;
+
+        // 2. حفظ البيانات الأساسية تحت المسار الرئيسي:
+        //    dental lap/case data/{year}/{month}/{day}/{doctorName}/{caseId}
         await database.ref(`${getDatabasePath()}/${caseId}`).set(caseData);
 
-        // 2. حفظ الفهارس: العام (اسم المريض → الرقم التأكيدي) و المفصل
+        // 3. حفظ الفهارس: العام (اسم المريض → الرقم التأكيدي) و المفصل
         await saveToSecretCodeIndex(secretCodeV2, caseId, patientName, datePath, doctorKey);
 
-        // 3. جلب بيانات العيادة
+        // 4. جلب بيانات العيادة وحفظ الطلب في مسار المندوب
         const clinicData = await getClinicData(currentClinicName);
-
-        // 4. حفظ الطلب في مسار المندوب
         await saveOrderToWorkersPath(caseData, caseId, clinicData, secretCodeV2);
 
-        // 5. حفظ في كولكشن الزيركون أو البورسلين
-        const { hasZircon, hasPorcelain } = getTreatmentTypeFromCase(toothTreatments);
-        if (hasZircon) await saveToTreatmentCollection(caseData, caseId, 'zircon');
-        if (hasPorcelain) await saveToTreatmentCollection(caseData, caseId, 'porcelain');
-
-        // 6. حفظ تحت "case type" لكل فئة رئيسية موجودة في الحالة:
-        //    dental lap/case data/case type/{categoryKey}/{caseId} = caseData
+        // 5. مؤشر الفئة (مرشد فقط — يدلّ على الموقع في المسار الرئيسي):
+        //    dental lap/case data/case type/{categoryKey}/{caseId} = { year, month, day, doctorName }
         try {
-            const cats = collectCaseCategories(toothTreatments);
+            const cats    = collectCaseCategories(toothTreatments);
+            const pointer = { year: datePath.year, month: datePath.month, day: datePath.day, doctorName: doctorKey };
             const updates = {};
             cats.forEach(catKey => {
-                updates[`dental lap/case data/case type/${catKey}/${caseId}`] = caseData;
+                updates[`dental lap/case data/case type/${catKey}/${caseId}`] = pointer;
             });
             if (Object.keys(updates).length > 0) await database.ref().update(updates);
         } catch (catErr) {
-            console.error('فشل حفظ case type:', catErr);
+            console.error('فشل حفظ مؤشر case type:', catErr);
         }
 
-        // 7. حفظ فاتورة الحالة وتحديث الفاتورة الإجمالية للطبيب
-        let caseTotalPrice = 0;
+        // 6. حفظ فاتورة الحالة وتحديث الفاتورة الإجمالية للطبيب
         try {
-            caseTotalPrice = await saveCaseInvoice(caseData, caseId);
+            await saveCaseInvoice(caseData, caseId);
         } catch (invErr) {
             console.error('فشل تحديث الفاتورة:', invErr);
         }
 
-        // 8. حفظ نسخة موحّدة من الحالة تحت الطبيب لاستعراض السجل بكل الأوقات
-        //    + بيانات الدفع: المبلغ المطلوب / المبلغ المدفوع / المتبقي / حالة الدفع
+        // 7. مؤشر مسطّح تحت الطبيب — مجرد بيانات إرشاد عن مكان الحالة في المسار الرئيسي
+        //    dental lap/users/doctors/data/{doctorKey}/cases/{caseId} = { year, month, day, doctorName, caseId, patientName }
         try {
-            const flatCase = Object.assign({}, caseData, {
-                total: caseTotalPrice,
-                paidAmount: 0,
-                remainingAmount: caseTotalPrice,
-                isPaid: caseTotalPrice === 0,
-            });
-            await database.ref(`dental lap/data/${doctorKey}/cases/${caseId}`).set(flatCase);
+            const flatPointer = {
+                year:        datePath.year,
+                month:       datePath.month,
+                day:         datePath.day,
+                doctorName:  doctorKey,
+                caseId,
+                patientName,
+            };
+            await database.ref(`dental lap/users/doctors/data/${doctorKey}/cases/${caseId}`).set(flatPointer);
         } catch (flatErr) {
-            console.error('فشل حفظ نسخة الطبيب الموحّدة:', flatErr);
+            console.error('فشل حفظ مؤشر الطبيب المسطّح:', flatErr);
         }
 
         currentOrderStatus = finalOrderStatus;
         updateStatusBar(finalOrderStatus);
         updateStepDates(statusHistory);
 
-        // عرض الرقم التأكيدي الجديد
-        displaySecretCode(currentClinicName, secretCodeV2);
+        // عرض اسم المريض + الرقم التأكيدي مكان زر الرفع (بدون أي إشعارات)
+        displaySecretCode(patientName, secretCodeV2);
 
         setReadOnlyMode(true);
-
-        let treatmentMsg = hasZircon && hasPorcelain ? ' (زيركون + بورسلين)' : hasZircon ? ' (زيركون)' : hasPorcelain ? ' (بورسلين)' : '';
-        let deliveryMsg = !uploadedFileName ? '\n\n📦 تم إرسال الطلب إلى المندوب لتوصيله للمعمل' : '';
-
-        const folderName = `${currentClinicName}_${clinicData?.governorate || 'غير_محدد'}_${clinicData?.area || 'غير_محدد'}`;
-
-        alert(`✅ تم حفظ الحالة بنجاح!${treatmentMsg}\n🔐 الرقم التأكيدي: ${secretCodeV2}\n🏥 اسم العيادة: ${currentClinicName}\n🆔 معرف الحالة: ${caseId}\n📅 المسار: ${datePath.year}/${datePath.month}/${datePath.day}\n📁 مجلد المندوب: ${folderName}\n\n🔒 الحالة الآن في وضع القراءة فقط ولا يمكن تعديلها.${deliveryMsg}`);
         return true;
     } catch (error) { 
         console.error("خطأ:", error); 
@@ -1578,14 +1497,13 @@ function loadCaseToDashboard(caseData) {
     updateSelectedCount();
 
     if (currentSecretCode) {
-        displaySecretCode(caseData.secretCode || currentClinicName, currentSecretCode);
+        displaySecretCode(caseData.patientName || '', currentSecretCode);
     } else {
         hideSecretCode();
     }
 
     setReadOnlyMode(true);
     updateAiBarVisibility();
-    alert(`✅ تم تحميل حالة المريض: ${caseData.patientName}\n🔐 الرقم التأكيدي: ${currentSecretCode || 'غير متوفر'}\n🏥 اسم العيادة: ${caseData.secretCode || currentClinicName}\n🔒 هذه الحالة للقراءة فقط ولا يمكن تعديلها.`);
 }
 
 function resetTeethUI() {
@@ -1613,6 +1531,12 @@ function resetConnectionsUI() {
     addConnectionDots();
 }
 
+// إغلاق نافذة السجل مع تأثير ظهور/اختفاء
+function closeOverlayAnimated(overlay) {
+    overlay.classList.add('hiding');
+    overlay.addEventListener('animationend', () => overlay.remove(), { once: true });
+}
+
 function showCaseDetails(caseData) {
     const overlay = document.createElement('div');
     overlay.className = 'records-overlay';
@@ -1633,10 +1557,9 @@ function showCaseDetails(caseData) {
         <h3 style="color:#ffb74d; text-align:center;">📋 تفاصيل الحالة</h3>
         <div><p><strong>🆔 المعرف:</strong> ${escapeHtml(caseData.caseId)}</p>
         <p><strong>🔐 الرقم التأكيدي:</strong> <span style="font-size: 24px; font-family: monospace; letter-spacing: 2px; color: #ffd700;">${escapeHtml(caseData.randomCode || 'غير متوفر')}</span></p>
-        <p><strong>🏥 اسم العيادة:</strong> ${escapeHtml(caseData.secretCode || currentClinicName)}</p>
+        <p><strong>🏥 اسم العيادة:</strong> ${escapeHtml(currentClinicName || '')}</p>
         <p><strong>👤 اسم المريض:</strong> ${escapeHtml(caseData.patientName)}</p>
-        <p><strong>📅 التاريخ:</strong> ${escapeHtml(caseData.date)}</p>
-        <p><strong>🏥 العيادة:</strong> ${escapeHtml(caseData.clinicName || currentClinicName)}</p>
+        <p><strong>📅 التاريخ:</strong> ${escapeHtml(caseData._datePath || `${caseData._year || ''}/${caseData._month || ''}/${caseData._day || ''}`)}</p>
         <p><strong>📝 الملاحظات:</strong> ${escapeHtml(caseData.notes || 'لا توجد')}</p>
         <p><strong>📊 حالة الطلب:</strong> <span style="color:#4caf50;">${statusNames[caseData.orderStatus] || 'غير محدد'}</span></p>
         ${caseData.scannerFile ? `<p><strong>📎 ملف:</strong> ${escapeHtml(caseData.scannerFile)}</p>` : ''}
@@ -1645,8 +1568,8 @@ function showCaseDetails(caseData) {
         <div style="display:flex; gap:10px; margin-top:20px;"><button class="load-case-btn" style="background:#2e7d32; padding:8px 20px; border-radius:40px; border:none; color:white; cursor:pointer; flex:1;">📂 تحميل الحالة للواجهة</button><button class="close-detail" style="background:#c62828; padding:8px 20px; border-radius:40px; border:none; color:white; cursor:pointer;">إغلاق</button></div>
     `;
 
-    card.querySelector('.close-detail').addEventListener('click', () => overlay.remove());
-    card.querySelector('.load-case-btn').addEventListener('click', () => { loadCaseToDashboard(caseData); overlay.remove(); });
+    card.querySelector('.close-detail').addEventListener('click', () => closeOverlayAnimated(overlay));
+    card.querySelector('.load-case-btn').addEventListener('click', () => { loadCaseToDashboard(caseData); closeOverlayAnimated(overlay); });
     overlay.appendChild(card);
     document.body.appendChild(overlay);
 }
@@ -1676,14 +1599,36 @@ function buildPaymentBadge(caseData) {
 }
 
 // عرض كل حالات الطبيب من قاعدة البيانات (بكل التواريخ) مع حالة الدفع
+// يقرأ المؤشّرات المسطّحة تحت الطبيب ثم يستخرج البيانات الكاملة من المسار الرئيسي
 async function showCasesRecords() {
     const doctorKey = getDoctorKey();
     if (!doctorKey || doctorKey === 'unknown') { alert('⚠️ لم يتم التعرف على الطبيب الحالي'); return; }
 
-    const snapshot = await database.ref(`dental lap/data/${doctorKey}/cases`).once('value');
-    const cases = snapshot.val();
-    if (!cases || Object.keys(cases).length === 0) {
+    const snapshot = await database.ref(`dental lap/users/doctors/data/${doctorKey}/cases`).once('value');
+    const pointers = snapshot.val();
+    if (!pointers || Object.keys(pointers).length === 0) {
         alert("📭 لا توجد حالات مسجلة لهذا الطبيب حتى الآن");
+        return;
+    }
+
+    // استرجاع البيانات الكاملة من المسار الرئيسي لكل مؤشّر
+    const pointerArr = Object.values(pointers);
+    const fetched = await Promise.all(pointerArr.map(async p => {
+        try {
+            const path = `dental lap/case data/${p.year}/${p.month}/${p.day}/${p.doctorName}/${p.caseId}`;
+            const snap = await database.ref(path).once('value');
+            const data = snap.val();
+            if (!data) return null;
+            // ندمج المؤشر داخل الكائن لكي تظل سنة/شهر/يوم متاحة للعرض
+            return Object.assign({}, data, {
+                _year: p.year, _month: p.month, _day: p.day,
+                _datePath: `${p.year}/${p.month}/${p.day}`,
+            });
+        } catch (e) { console.error('فشل قراءة الحالة:', p, e); return null; }
+    }));
+    const cases = fetched.filter(c => c && c.caseId);
+    if (cases.length === 0) {
+        alert("📭 لا توجد بيانات حالات قابلة للعرض");
         return;
     }
 
@@ -1702,7 +1647,13 @@ async function showCasesRecords() {
     `;
 
     const listDiv = card.querySelector('#casesList');
-    const sortedCases = Object.values(cases).filter(c => c.caseId).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    // ترتيب من الأحدث للأقدم بناءً على أول تسجيل لحالة الطلب (statusHistory[1]) ثم على رقم الحالة
+    const sortedCases = cases.slice().sort((a, b) => {
+        const ta = (a.statusHistory && a.statusHistory[1]) || 0;
+        const tb = (b.statusHistory && b.statusHistory[1]) || 0;
+        if (tb !== ta) return tb - ta;
+        return (b.caseId || '').localeCompare(a.caseId || '');
+    });
     const statusNames = {1: '📦 وصول الطلب', 2: '🚚 إرسال مندوب', 3: '⚙️ قيد العمل', 4: '🏥 الشحن للعيادة'};
 
     sortedCases.forEach(caseData => {
@@ -1722,8 +1673,8 @@ async function showCasesRecords() {
                 <div style="flex:2;">
                     <p><strong>👤 المريض:</strong> ${escapeHtml(caseData.patientName)}</p>
                     <p><strong>🔐 الرقم التأكيدي:</strong> <span style="font-family: monospace; font-size: 16px; color: #ffd700;">${escapeHtml(caseData.randomCode || 'غير متوفر')}</span></p>
-                    <p><strong>🏥 اسم العيادة:</strong> ${escapeHtml(caseData.secretCode || currentClinicName)}</p>
-                    <p><strong>📅 التاريخ:</strong> ${escapeHtml(caseData.date)}</p>
+                    <p><strong>🏥 اسم العيادة:</strong> ${escapeHtml(currentClinicName || '')}</p>
+                    <p><strong>📅 التاريخ:</strong> ${escapeHtml(caseData._datePath || `${caseData._year || ''}/${caseData._month || ''}/${caseData._day || ''}`)}</p>
                     <p><strong>📊 الحالة:</strong> ${statusNames[caseData.orderStatus] || 'جديد'}</p>
                     <p><strong>💳 الدفع:</strong> ${pay.badge}</p>
                     ${pay.line}
@@ -1744,10 +1695,10 @@ async function showCasesRecords() {
         `;
         listDiv.appendChild(caseDiv);
         caseDiv.querySelector('.view-case-btn').addEventListener('click', (e) => { e.stopPropagation(); showCaseDetails(caseData); });
-        caseDiv.querySelector('.load-case-btn').addEventListener('click', (e) => { e.stopPropagation(); loadCaseToDashboard(caseData); overlay.remove(); });
+        caseDiv.querySelector('.load-case-btn').addEventListener('click', (e) => { e.stopPropagation(); loadCaseToDashboard(caseData); closeOverlayAnimated(overlay); });
     });
 
-    card.querySelector('.close-records').addEventListener('click', () => overlay.remove());
+    card.querySelector('.close-records').addEventListener('click', () => closeOverlayAnimated(overlay));
     overlay.appendChild(card);
     document.body.appendChild(overlay);
 }
@@ -1865,17 +1816,22 @@ function initAdvancedDentalSystem() {
 
     const centerX = teethContainer.clientWidth / 2;
     const centerY = teethContainer.clientHeight / 2;
-    // نوسّع نصف القطر بالكامل لإبعاد الأزرار عن بعضها (إلغاء التلاحم)
-    const radiusX = Math.max(centerX - 35, 240);
-    const radiusY = Math.max(centerY - 35, 220);
+    // هامش 10px من الحافة العلوية + 10px من حقل الذكاء الاصطناعي (الحافة السفلية)
+    // نصف قطر الزر = 22px  →  حافة المركز = 10 + 22 = 32px
+    // radiusY = centerY - 32 (حافة العلوية للفك العلوي) - 32 (إزاحة الصف) = centerY - 64
+    const MARGIN = 32;       // 10px edge + 22px half-button
+    const ROW_OFFSET = 28;   // الفجوة بين الفكين العلوي والسفلي
+    const radiusY = Math.max(centerY - MARGIN - ROW_OFFSET, 110);
+    // نصف القطر الأفقي أضيق لتقريب الضرس الخلفي 18→28 و38→48
+    const radiusX = Math.max(centerX * 0.70, 130);
 
     const drawTooth = (number, x, y) => {
         const button = document.createElement("button");
         button.classList.add("tooth-button");
         button.innerText = number;
-        // الإزاحة = نصف عرض الزر (52/2)
-        button.style.left = (x - 26) + "px";
-        button.style.top  = (y - 26) + "px";
+        // الإزاحة = نصف عرض الزر (44/2 = 22)
+        button.style.left = (x - 22) + "px";
+        button.style.top  = (y - 22) + "px";
         if (toothTreatments[number]) {
             const td = getTreatmentData(toothTreatments[number]);
             button.style.background = td.color;
@@ -1934,11 +1890,11 @@ function initAdvancedDentalSystem() {
 
     upperTeeth.forEach((number, index) => {
         const angle = Math.PI + ((index + 1) / (upperTeeth.length + 1)) * Math.PI;
-        drawTooth(number, centerX + radiusX * Math.cos(angle), centerY + radiusY * Math.sin(angle) - 32);
+        drawTooth(number, centerX + radiusX * Math.cos(angle), centerY + radiusY * Math.sin(angle) - ROW_OFFSET);
     });
     lowerTeeth.forEach((number, index) => {
         const angle = ((index + 1) / (lowerTeeth.length + 1)) * Math.PI;
-        drawTooth(number, centerX + radiusX * Math.cos(angle), centerY + radiusY * Math.sin(angle) + 32);
+        drawTooth(number, centerX + radiusX * Math.cos(angle), centerY + radiusY * Math.sin(angle) + ROW_OFFSET);
     });
 
     setTimeout(() => addConnectionDots(), 100);
