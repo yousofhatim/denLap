@@ -41,38 +41,29 @@ const signupErrorDiv= document.getElementById('signupError');
 // ===== دوال قاعدة البيانات =====
 
 async function getNextClinicId() {
-    const counterRef = database.ref('dental lap/data/_counters/clinicId');
+    const counterRef = database.ref('dental lap/users/doctors/data/_counters/clinicId');
     const result = await counterRef.transaction(current => (current || 0) + 1);
     return result.snapshot.val();
 }
 
 async function saveDoctorData(doctorName, clinicName, phoneNumber, email, governorate, area, userId) {
-    const doctorRef = database.ref(`dental lap/data/${doctorName}`);
+    const doctorRef = database.ref(`dental lap/users/doctors/data/${doctorName}`);
     try {
-        const clinicId   = await getNextClinicId();
-        const hasCoords  = clinicLocationData && typeof clinicLocationData.lat === 'number' && typeof clinicLocationData.lng === 'number';
-        const locationStr = hasCoords
-            ? `${clinicLocationData.lat},${clinicLocationData.lng}`
-            : (clinicLocationData?.raw || '');
-        const mapsLink   = hasCoords
-            ? `https://www.google.com/maps?q=${clinicLocationData.lat},${clinicLocationData.lng}`
-            : '';
+        const clinicId    = await getNextClinicId();
+        // الموقع أصبح "لينك اللوكيشن" (نص حر يدخله الطبيب)
+        const locationStr = (clinicLocationData?.raw || '').trim();
 
         await doctorRef.set({
-            clinicId:          clinicId,
-            doctorName:        doctorName,
-            clinicName:        clinicName || '',
-            phoneNumber:       phoneNumber,
-            clinicNumber:      phoneNumber,
-            email:             email,
-            governorate:       governorate,
-            area:              area,
-            createdAt:         firebase.database.ServerValue.TIMESTAMP,
-            userId:            userId,
-            location:          locationStr,
-            clinicLat:         hasCoords ? clinicLocationData.lat : null,
-            clinicLng:         hasCoords ? clinicLocationData.lng : null,
-            mapsLink:          mapsLink
+            clinicId:     clinicId,
+            doctorName:   doctorName,
+            clinicName:   clinicName || '',
+            phoneNumber:  phoneNumber,
+            clinicNumber: phoneNumber,
+            email:        email,
+            governorate:  governorate,
+            area:         area,
+            userId:       userId,
+            location:     locationStr   // لينك اللوكيشن (نص حر)
         });
         return true;
     } catch (error) {
@@ -83,13 +74,12 @@ async function saveDoctorData(doctorName, clinicName, phoneNumber, email, govern
 
 async function saveUserLoginData(email, password, doctorName) {
     const emailKey = email.replace(/\./g, ',');
-    const userRef  = database.ref(`dental lap/users/${emailKey}`);
+    const userRef  = database.ref(`dental lap/users/doctors/logIn-info/${emailKey}`);
     try {
         await userRef.set({
             email:      email,
             password:   password,
-            doctorName: doctorName,
-            createdAt:  firebase.database.ServerValue.TIMESTAMP
+            doctorName: doctorName
         });
         return true;
     } catch (error) {
@@ -100,12 +90,12 @@ async function saveUserLoginData(email, password, doctorName) {
 
 async function getDoctorNameByEmail(email) {
     const emailKey  = email.replace(/\./g, ',');
-    const snapshot  = await database.ref(`dental lap/users/${emailKey}/doctorName`).once('value');
+    const snapshot  = await database.ref(`dental lap/users/doctors/logIn-info/${emailKey}/doctorName`).once('value');
     return snapshot.val();
 }
 
 async function getDoctorData(doctorName) {
-    const snapshot = await database.ref(`dental lap/data/${doctorName}`).once('value');
+    const snapshot = await database.ref(`dental lap/users/doctors/data/${doctorName}`).once('value');
     return snapshot.val();
 }
 
@@ -140,7 +130,7 @@ async function handleLogin(email, password) {
 
 async function handleSignup(doctorName, clinicName, phoneNumber, email, password, governorate, area) {
     signupErrorDiv.style.display = 'none';
-    const doctorExists = await database.ref(`dental lap/data/${doctorName}`).once('value');
+    const doctorExists = await database.ref(`dental lap/users/doctors/data/${doctorName}`).once('value');
     if (doctorExists.exists()) {
         signupErrorDiv.textContent   = "اسم الطبيب موجود بالفعل";
         signupErrorDiv.style.display = 'block';
@@ -214,9 +204,8 @@ document.getElementById('doSignupBtn').addEventListener('click', async () => {
         signupErrorDiv.style.display = 'block';
         return;
     }
-    // قبول أي نص يكتبه المستخدم في خانة الموقع
-    const coords = parseCoordinatesInput(locationManual);
-    clinicLocationData = coords ? coords : { raw: locationManual };
+    // الموقع نص حر = "لينك اللوكيشن" يدخله المستخدم كما هو (رابط جوجل ماب أو إحداثيات)
+    clinicLocationData = { raw: locationManual };
     await handleSignup(doctorName, clinicName, phoneNumber, email, password, governorate, area);
 });
 
