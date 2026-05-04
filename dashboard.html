@@ -1,1 +1,227 @@
-1
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>لوحة تحكم عيادات الأسنان</title>
+    <link rel="stylesheet" href="/dashboard.css">
+</head>
+<body>
+    <div id="dashboardSection" class="dashboard-container">
+
+        <!-- ===== Header ===== -->
+        <div class="dashboard-header">
+            <div class="welcome-area">
+                <h2 id="welcomeMessage">مرحباً دكتور</h2>
+                <p id="clinicSubtitle">نظام إدارة العيادة المتقدم</p>
+            </div>
+            <button id="logoutBtn" class="logout-btn">🚪 تسجيل خروج</button>
+        </div>
+
+        <!-- ===== Status Bar ===== -->
+        <div class="status-bar">
+            <div class="status-steps">
+                <div class="status-step" data-step="1">
+                    <div class="step-icon">📥</div>
+                    <div class="step-title">الإضافة لقائمة الانتظار</div>
+                    <div class="step-date" id="step1-date"></div>
+                </div>
+                <div class="status-step" data-step="2">
+                    <div class="step-icon">📦</div>
+                    <div class="step-title">وصول الطلب للمعمل</div>
+                    <div class="step-date" id="step2-date"></div>
+                </div>
+                <div class="status-step" data-step="3">
+                    <div class="step-icon">🛵</div>
+                    <div class="step-title">وصول المندوب للعياده</div>
+                    <div class="step-date" id="step3-date"></div>
+                </div>
+                <div class="status-step" data-step="4">
+                    <div class="step-icon">🏭</div>
+                    <div class="step-title">المعمل</div>
+                    <div class="step-date" id="step4-date"></div>
+                    <div class="step-tooltip" id="step4Tooltip">لا توجد بيانات بعد</div>
+                </div>
+                <div class="status-step" data-step="5">
+                    <div class="step-icon">🏥</div>
+                    <div class="step-title">الشحن للعيادة</div>
+                    <div class="step-date" id="step5-date"></div>
+                </div>
+                <div class="progress-line">
+                    <div class="progress-line-fill" id="progressLineFill"></div>
+                    <div class="moto-badge" id="motoBadge" style="display:none;">🏍️</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== Main Content ===== -->
+        <div class="main-content">
+
+            <!-- ── Right Card : Form ── -->
+            <div class="right-section">
+                <div class="input-group">
+                    <label>👤 اسم المريض <span style="color:#ff6b6b;">*</span></label>
+                    <input type="text" id="patientName" placeholder="أدخل اسم المريض (إلزامي)">
+                </div>
+                <div class="input-group">
+                    <label>📝 الملاحظات</label>
+                    <textarea id="notes" placeholder="الملاحظات الطبية ..." rows="3"></textarea>
+                </div>
+                <div class="action-buttons three-cols">
+                    <button class="primary-btn" id="saveBtnDashboard">💾 حفظ</button>
+                    <button class="primary-btn record-btn" id="recordBtnDashboard" style="position:relative;">📋 السجل <span id="waitingBadge" style="display:none; position:absolute; top:-6px; right:-6px; background:#f44336; color:white; border-radius:50%; min-width:20px; height:20px; font-size:11px; line-height:20px; text-align:center; padding:0 4px; font-weight:bold;"></span></button>
+                    <button class="primary-btn secondary-btn" id="newBtnDashboard">✨ جديد</button>
+                </div>
+
+                <!-- ── الفاتورة الإجمالية للطبيب ── -->
+                <div class="doctor-invoice" id="doctorInvoice">
+                    <div class="di-header">
+                        <span class="di-title">💼 الفاتورة الإجمالية</span>
+                        <span class="di-cases" id="diCases">0 حالة</span>
+                    </div>
+                    <div class="di-amount">
+                        <span id="diTotal">0</span>
+                        <span class="di-currency">ج.م</span>
+                    </div>
+                </div>
+
+                <!-- ── ملخّص العلاجات المختارة ── -->
+                <div class="treatments-summary" id="treatmentsSummary">
+                    <div class="ts-total">
+                        سعر الحالة: <span id="treatmentsTotalPrice">0</span> ج.م
+                    </div>
+                    <div class="ts-header">
+                        <span>🧾 العلاجات المحددة</span>
+                        <span class="ts-count" id="tsCount">0</span>
+                    </div>
+                    <div class="ts-list" id="treatmentsSummaryList">
+                        <div class="ts-empty">لا توجد علاجات بعد — اختر سنّاً وحدّد علاجه.</div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- ── Middle Card : Teeth + AI Bar ── -->
+            <div class="middle-section">
+                <div class="teeth-container" id="teethContainer">
+                    <div class="upload-scanner-btn" id="uploadScannerBtn">
+                        <div class="icon">📎</div>
+                        <div class="text">رفع ملف السكان</div>
+                    </div>
+                    <div class="scanner-selected-indicator" id="scannerSelectedIndicator" style="display:none;">
+                        <div class="ssi-check">✅</div>
+                        <div class="ssi-name" id="scannerFileName"></div>
+                        <button class="ssi-change-btn" id="scannerChangeBtn">🔄 تبديل الملف</button>
+                    </div>
+                    <div class="upload-progress-bar" id="uploadProgressBar">
+                        <div class="progress-bar-container">
+                            <div class="progress-fill" id="progressFill"></div>
+                        </div>
+                        <div class="progress-text" id="progressText">0%</div>
+                        <div class="progress-status" id="progressStatus">📦 جاري التحضير...</div>
+                    </div>
+                </div>
+
+                <!-- AI Quick-Ask Bar (يظهر فقط بعد حفظ الحالة) -->
+                <div class="ai-bar" id="aiBarWrap" style="display:none;">
+                    <input type="text" id="aiChatInput" class="ai-bar-input"
+                           placeholder="إسأل الذكاء الاصطناعي عن هذه الحالة...">
+                    <button id="aiChatBtn" class="ai-bar-btn">🤖 إرسال</button>
+                </div>
+                <div class="ai-bar-locked" id="aiBarLocked">
+                    🔒 احفظ الحالة أولاً لتفعيل المساعد الذكي
+                </div>
+            </div>
+
+            <!-- ── Left Card : Treatment Sidebar ── -->
+            <div class="left-section" id="treatmentSidebar">
+                <div id="tpEmpty" class="tp-empty">
+                    <div class="tp-empty-icon">🦷</div>
+                    <div class="tp-empty-label">اختر سنًا أولاً<br>لتحديد نوع العلاج</div>
+                </div>
+                <div id="tpActive" class="tp-active" style="display:none;">
+                    <div class="tp-tooth-header">
+                        <span>🦷 السن: <strong id="tpToothNum">-</strong></span>
+                        <button class="tp-deselect-btn" id="tpDeselectBtn" title="إلغاء">✕</button>
+                    </div>
+                    <div id="tpCategoriesList" class="tp-categories-list"></div>
+                </div>
+                <div id="tpLocked" class="tp-locked" style="display:none;">
+                    <div class="tp-lock-icon">🔒</div>
+                    <div id="tpLockedInfo" class="tp-locked-info"></div>
+                    <button class="tp-change-btn" id="tpChangeBtn">✏️ تغيير العلاج</button>
+                </div>
+                <div class="tp-clear-section">
+                    <div class="tp-default-tooth" id="tpDefaultTooth">✕</div>
+                    <div class="tp-drag-hint">اسحب لإزالة علاج سن</div>
+                </div>
+                <div class="info-text" style="flex-shrink:0;">
+                    🎯 تم تحديد <span id="selectedToothCount">0</span> سن
+                </div>
+            </div>
+
+        </div><!-- /main-content -->
+    </div><!-- /dashboard-container -->
+
+    <!-- ===== AI Chat Overlay (slides up from bottom) ===== -->
+    <div id="aiChatOverlay" class="ai-overlay" style="display:none;">
+        <div class="ai-backdrop" id="aiBackdrop"></div>
+        <div class="ai-panel">
+            <div class="ai-header">
+                <button class="ai-back-btn" id="aiBackBtn">← رجوع</button>
+                <span class="ai-title">🤖 مساعد الذكاء الاصطناعي</span>
+                <span></span>
+            </div>
+            <div id="aiUnsavedNotice" class="ai-unsaved-notice" style="display:none;">
+                ⚠️ الحالة غير محفوظة — لن تُحفظ المحادثة حتى يتم حفظ الحالة
+            </div>
+            <div id="aiMessages" class="ai-messages"></div>
+            <div class="ai-input-row">
+                <input type="text" id="aiSendInput" class="ai-send-input"
+                       placeholder="اكتب سؤالك هنا...">
+                <button id="aiSendBtn" class="ai-send-btn">إرسال</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== Customer Service Overlay (pre-built in HTML) ===== -->
+    <div id="csOverlay" class="cs-overlay" style="display:none;">
+        <div class="cs-card">
+            <div class="cs-header">
+                <button class="cs-close-btn" id="csCloseBtn">✕</button>
+                <h3>🤖 خدمة العملاء</h3>
+                <p>الدعم الفني والمساعدة</p>
+            </div>
+            <div class="cs-bot-message">
+                <div class="cs-bot-avatar">
+                    <div class="cs-bot-icon">🤖</div>
+                    <div class="cs-bot-name">مساعد خدمة العملاء</div>
+                </div>
+                <div class="cs-bot-text" id="csBotText">
+                    أقدر أساعد حضرتك إزاي؟
+                </div>
+            </div>
+            <div class="cs-options">
+                <button class="cs-option-btn cs-option-edit"   data-action="edit">✏️ تعديل كروس</button>
+                <button class="cs-option-btn cs-option-note"   data-action="note">📝 إضافة ملحوظة</button>
+                <button class="cs-option-btn cs-option-change" data-action="change">🔄 تغيير حاجة معينة</button>
+                <button class="cs-option-btn cs-option-cancel" data-action="cancel">❌ إلغاء الحالة</button>
+            </div>
+            <div class="cs-input-section" id="csInputSection">
+                <div id="csInputContent"></div>
+                <div class="cs-action-buttons">
+                    <button class="cs-back-btn" id="csBackBtn">🔙 رجوع</button>
+                    <button class="cs-submit-btn" id="csSubmitBtn">✅ تأكيد</button>
+                </div>
+                <div class="cs-success-msg" id="csSuccessMsg"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+    <script src="/dashboard.js"></script>
+</body>
+</html>
