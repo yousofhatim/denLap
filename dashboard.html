@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>لوحة تحكم عيادات الأسنان</title>
-    <link rel="stylesheet" href="dashboard.css">
+    <link rel="stylesheet" href="/dashboard.css">
 </head>
 <body>
     <div id="dashboardSection" class="dashboard-container">
@@ -22,26 +22,35 @@
         <div class="status-bar">
             <div class="status-steps">
                 <div class="status-step" data-step="1">
-                    <div class="step-icon">📦</div>
-                    <div class="step-title">وصول الطلب للمعمل</div>
+                    <div class="step-icon">📥</div>
+                    <div class="step-title">الإضافة لقائمة الانتظار</div>
                     <div class="step-date" id="step1-date"></div>
                 </div>
                 <div class="status-step" data-step="2">
-                    <div class="step-icon">🚚</div>
-                    <div class="step-title">إرسال مندوب</div>
+                    <div class="step-icon">📦</div>
+                    <div class="step-title">وصول الطلب للمعمل</div>
                     <div class="step-date" id="step2-date"></div>
                 </div>
                 <div class="status-step" data-step="3">
-                    <div class="step-icon">⚙️</div>
-                    <div class="step-title">قيد العمل</div>
+                    <div class="step-icon">🛵</div>
+                    <div class="step-title">وصول المندوب للعياده</div>
                     <div class="step-date" id="step3-date"></div>
                 </div>
                 <div class="status-step" data-step="4">
+                    <div class="step-icon">🏭</div>
+                    <div class="step-title">المعمل</div>
+                    <div class="step-date" id="step4-date"></div>
+                    <div class="step-tooltip" id="step4Tooltip">لا توجد بيانات بعد</div>
+                </div>
+                <div class="status-step" data-step="5">
                     <div class="step-icon">🏥</div>
                     <div class="step-title">الشحن للعيادة</div>
-                    <div class="step-date" id="step4-date"></div>
+                    <div class="step-date" id="step5-date"></div>
                 </div>
-                <div class="progress-line"><div class="progress-line-fill" id="progressLineFill"></div></div>
+                <div class="progress-line">
+                    <div class="progress-line-fill" id="progressLineFill"></div>
+                    <div class="moto-badge" id="motoBadge" style="display:none;">🏍️</div>
+                </div>
             </div>
         </div>
 
@@ -60,7 +69,7 @@
                 </div>
                 <div class="action-buttons three-cols">
                     <button class="primary-btn" id="saveBtnDashboard">💾 حفظ</button>
-                    <button class="primary-btn record-btn" id="recordBtnDashboard">📋 السجل</button>
+                    <button class="primary-btn record-btn" id="recordBtnDashboard" style="position:relative;">📋 السجل <span id="waitingBadge" style="display:none; position:absolute; top:-6px; right:-6px; background:#f44336; color:white; border-radius:50%; min-width:20px; height:20px; font-size:11px; line-height:20px; text-align:center; padding:0 4px; font-weight:bold;"></span></button>
                     <button class="primary-btn secondary-btn" id="newBtnDashboard">✨ جديد</button>
                 </div>
 
@@ -78,15 +87,15 @@
 
                 <!-- ── ملخّص العلاجات المختارة ── -->
                 <div class="treatments-summary" id="treatmentsSummary">
+                    <div class="ts-total">
+                        سعر الحالة: <span id="treatmentsTotalPrice">0</span> ج.م
+                    </div>
                     <div class="ts-header">
                         <span>🧾 العلاجات المحددة</span>
                         <span class="ts-count" id="tsCount">0</span>
                     </div>
                     <div class="ts-list" id="treatmentsSummaryList">
                         <div class="ts-empty">لا توجد علاجات بعد — اختر سنّاً وحدّد علاجه.</div>
-                    </div>
-                    <div class="ts-total">
-                        المجموع: <span id="treatmentsTotalPrice">0</span> ج.م
                     </div>
                 </div>
 
@@ -98,6 +107,11 @@
                     <div class="upload-scanner-btn" id="uploadScannerBtn">
                         <div class="icon">📎</div>
                         <div class="text">رفع ملف السكان</div>
+                    </div>
+                    <div class="scanner-selected-indicator" id="scannerSelectedIndicator" style="display:none;">
+                        <div class="ssi-check">✅</div>
+                        <div class="ssi-name" id="scannerFileName"></div>
+                        <button class="ssi-change-btn" id="scannerChangeBtn">🔄 تبديل الملف</button>
                     </div>
                     <div class="upload-progress-bar" id="uploadProgressBar">
                         <div class="progress-bar-container">
@@ -208,6 +222,6 @@
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
-    <script src="dashboard.js"></script>
+    <script src="/dashboard.js"></script>
 </body>
 </html>
