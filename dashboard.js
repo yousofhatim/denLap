@@ -22,6 +22,7 @@ let toothTreatments = {};
 let toothConnections = {};
 let currentOrderStatus = 1;
 let currentCaseId = null;
+let currentCasePath = null;
 let uploadedFileName = null;
 let isReadOnly = false;
 let currentSecretCode = null;
@@ -31,6 +32,11 @@ let pendingUploadFile = null; // الملف اللي اتختار قبل ما ا
 let currentConversation = [];
 let openAiApiKey = null;
 let aiSystemPrompt = null;
+
+// Real-time listeners
+let _caseListener = null;
+let _caseListenerPath = null;
+let _lastConversationLength = 0;
 
 async function loadOpenAiApiKey() {
     if (openAiApiKey) return openAiApiKey;
@@ -113,7 +119,8 @@ function rebuildAiMessagesUI(conversation) {
     if (!messagesDiv) return;
     messagesDiv.innerHTML = '';
     (conversation || []).forEach(m => {
-        addAiMessage(m.role === 'user' ? 'user' : 'bot', m.content);
+        if (m.role === 'admin') addAiMessage('admin', m.content);
+        else addAiMessage(m.role === 'user' ? 'user' : 'bot', m.content);
     });
 }
 
@@ -126,7 +133,7 @@ function buildCaseContext() {
     const treatmentsSummary = teethList.length
         ? teethList.map(t => `سن ${t}: ${toothTreatments[t]}`).join('، ')
         : 'لا توجد علاجات محددة';
-    const statusNames = {1:'وصول الطلب للمعمل',2:'إرسال مندوب',3:'قيد العمل',4:'الشحن للعيادة'};
+    const statusNames = {1:'الإضافة لقائمة الانتظار',2:'وصول الطلب للمعمل',3:'وصول المندوب للعياده',4:'المعمل',5:'الشحن للعيادة'};
     const lines = [];
     if (patientName)        lines.push(`اسم المريض: ${patientName}`);
     if (doctorName)         lines.push(`اسم الطبيب: د. ${doctorName}`);
@@ -146,7 +153,11 @@ function addAiMessage(sender, text) {
     const messagesDiv = document.getElementById('aiMessages');
     if (!messagesDiv) return null;
     const div = document.createElement('div');
-    div.className = sender === 'bot' ? 'ai-msg-bot' : 'ai-msg-user';
+    if (sender === 'admin') {
+        div.className = 'ai-msg-admin';
+    } else {
+        div.className = sender === 'bot' ? 'ai-msg-bot' : 'ai-msg-user';
+    }
     div.textContent = text;
     messagesDiv.appendChild(div);
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
@@ -187,7 +198,8 @@ async function fetchDoctorDataForAi() {
 async function fetchSavedCaseDataForAi() {
     if (!currentCaseId) return null;
     try {
-        const snap = await database.ref(`${getDatabasePath()}/${currentCaseId}`).once('value');
+        const path = currentCasePath || `${getDatabasePath()}/${currentCaseId}`;
+        const snap = await database.ref(path).once('value');
         return snap.val();
     } catch (e) { console.error('fetchSavedCaseDataForAi error:', e); return null; }
 }
@@ -200,6 +212,17 @@ async function sendAiMessage() {
 
     addAiMessage('user', text);
     currentConversation.push({ role: 'user', content: text });
+
+    // لو آخر رسالة قبل رسالة المستخدم الحالية كانت من الإدارة — المساعد لا يرد
+    const prevMsgs = currentConversation.slice(0, -1);
+    const lastNonUser = [...prevMsgs].reverse().find(m => m.role !== 'user');
+    if (lastNonUser && lastNonUser.role === 'admin') {
+        // حفظ المحادثة فقط بدون رد الذكاء الاصطناعي
+        if (currentCasePath) {
+            database.ref(currentCasePath + '/conversation').set(currentConversation).catch(() => {});
+        }
+        return;
+    }
 
     const messagesDiv = document.getElementById('aiMessages');
     const typingDiv   = document.createElement('div');
@@ -248,7 +271,7 @@ async function sendAiMessage() {
             const treatmentsList = savedCase.toothTreatments
                 ? Object.entries(savedCase.toothTreatments).map(([t,v]) => `سن ${t}: ${v}`).join('، ')
                 : 'لا يوجد';
-            const statusNames = {1:'وصول الطلب للمعمل',2:'إرسال مندوب',3:'قيد العمل',4:'الشحن للعيادة'};
+            const statusNames = {1:'الإضافة لقائمة الانتظار',2:'وصول الطلب للمعمل',3:'وصول المندوب للعياده',4:'المعمل',5:'الشحن للعيادة'};
             const clines = [
                 `معرف الحالة: ${savedCase.caseId || ''}`,
                 `الرقم التأكيدي: ${savedCase.randomCode || ''}`,
@@ -269,8 +292,8 @@ async function sendAiMessage() {
         const guardrails = '\n\nتعليمات مهمة: عندما يسألك الطبيب عن نفسه أو "هل تعرفني" أو ما شابه، أجب باسم الطبيب وليس باسم المريض. ميّز دائماً بين بيانات الطبيب وبيانات المريض.';
         const systemMsg = `${baseSystem}${doctorBlock}${caseBlock}${guardrails}`;
 
-        // Send only the last 10 messages from the conversation
-        const recentMessages = currentConversation.slice(-10);
+        // Send only the last 10 messages from the conversation (exclude admin messages — AI shouldn't see them)
+        const recentMessages = currentConversation.filter(m => m.role !== 'admin').slice(-10);
 
         const resp = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
@@ -304,7 +327,8 @@ async function sendAiMessage() {
 async function saveConversationToFirebase() {
     if (!currentCaseId) return;
     try {
-        await database.ref(`${getDatabasePath()}/${currentCaseId}/conversation`).set(currentConversation);
+        const path = currentCasePath || `${getDatabasePath()}/${currentCaseId}`;
+        await database.ref(`${path}/conversation`).set(currentConversation);
     } catch (e) { console.error('Conversation save error:', e); }
 }
 
@@ -333,16 +357,16 @@ const TREATMENT_TREE = {
                     { key: 'long_prep',  label: 'تحضيرة طويلة' },
                     { key: 'short_prep', label: 'تحضيرة قصيرة' },
                 ]}},
-            { key: 'pfm_porcelain_crown_gum',     label: 'Porcelain Crown WITH GUM (P.F.M)',  price: 300, color: '#1565c0',
+            { key: 'pfm_porcelain_crown_gum',     label: 'Porcelain Crown WITH GUM (P.F.M)',  price: 300, color: '#00acc1',
                 followUp: { question: 'الزرعات مفتوحة أم مقفولة؟', options: [
                     { key: 'open_implants',   label: 'زرعات مفتوحة' },
                     { key: 'closed_implants', label: 'زرعات مقفولة' },
                 ]}},
-            { key: 'pfm_repair',                  label: 'Repair Porcelain Crown',            price: 150, color: '#0d47a1' },
-            { key: 'pfm_casted_metal_crown',      label: 'Casted Metal Crown',                price: 150, color: '#37474f' },
-            { key: 'pfm_casted_metal_post_core',  label: 'Casted Metal Post & Core',          price: 250, color: '#263238' },
-            // البونتيك في فرع P.F.M بنفس سعر تركيبة البورسلين الأساسية (250)
-            { key: 'pfm_pontic',                  label: 'Pontic (P.F.M)',                    price: 250, color: '#c62828', isPontic: true },
+            { key: 'pfm_repair',                  label: 'Repair Porcelain Crown',            price: 150, color: '#ffb300' },
+            { key: 'pfm_casted_metal_crown',      label: 'Casted Metal Crown',                price: 150, color: '#78909c' },
+            { key: 'pfm_casted_metal_post_core',  label: 'Casted Metal Post & Core',          price: 250, color: '#455a64' },
+            // البونتيك في P.F.M: السعر يأخذ ديناميكياً من السن الملاصق المتصل (الافتراضي = 250)
+            { key: 'pfm_pontic',                  label: 'Pontic (P.F.M)',                    price: 250, color: '#ec407a', isPontic: true },
         ]
     },
     zirconium: {
@@ -351,17 +375,17 @@ const TREATMENT_TREE = {
         color: '#c2185b',
         treatments: [
             { key: 'zir_full_anatomy',     label: 'Full Anatomy Zirconium Crown (multi layers)', price: 700,  color: '#c2185b' },
-            { key: 'zir_full_anatomy_gum', label: 'Full Anatomy Zirconium Crown With gum',       price: 750,  color: '#ad1457',
+            { key: 'zir_full_anatomy_gum', label: 'Full Anatomy Zirconium Crown With gum',       price: 750,  color: '#f48fb1',
                 followUp: { question: 'الزرعات مفتوحة أم مقفولة؟', options: [
                     { key: 'open_implants',   label: 'زرعات مفتوحة' },
                     { key: 'closed_implants', label: 'زرعات مقفولة' },
                 ]}},
-            { key: 'zir_max',     label: 'Zirco Max Crown',         price: 800,  color: '#880e4f' },
-            { key: 'zir_french',  label: 'French Crown',            price: 900,  color: '#7b1fa2' },
-            { key: 'zir_german',  label: 'GERMAN Crown',            price: 1100, color: '#4a148c' },
+            { key: 'zir_max',     label: 'Zirco Max Crown',         price: 800,  color: '#6a1b9a' },
+            { key: 'zir_french',  label: 'French Crown',            price: 900,  color: '#00897b' },
+            { key: 'zir_german',  label: 'GERMAN Crown',            price: 1100, color: '#d84315' },
             { key: 'zir_emax',    label: 'E MAX Full Crown (press)',price: 1300, color: '#311b92' },
-            // البونتيك في فرع Zirconium بنفس سعر تركيبة الزيركون الأساسية (700)
-            { key: 'zir_pontic',  label: 'Pontic (Zirconium)',      price: 700,  color: '#ad1457', isPontic: true },
+            // البونتيك في Zirconium: السعر يأخذ ديناميكياً من السن الملاصق المتصل (الافتراضي = 700)
+            { key: 'zir_pontic',  label: 'Pontic (Zirconium)',      price: 700,  color: '#d81b60', isPontic: true },
         ]
     },
     temporary: {
@@ -369,9 +393,9 @@ const TREATMENT_TREE = {
         label: 'Temporary',
         color: '#f57c00',
         treatments: [
-            { key: 'tmp_pmma',    label: 'temporary PMMA crown ( cad cam )', price: 100, color: '#f57c00' },
-            { key: 'tmp_acrylic', label: 'temporary Acrylic Crown',          price: 100, color: '#ef6c00' },
-            { key: 'tmp_waxup',   label: 'Wax-up digital crown ( mock-up )', price: 50,  color: '#e65100' },
+            { key: 'tmp_pmma',    label: 'temporary PMMA crown ( cad cam )', price: 100, color: '#fb8c00' },
+            { key: 'tmp_acrylic', label: 'temporary Acrylic Crown',          price: 100, color: '#6d4c41' },
+            { key: 'tmp_waxup',   label: 'Wax-up digital crown ( mock-up )', price: 50,  color: '#fdd835' },
         ]
     },
     ortho: {
@@ -379,10 +403,10 @@ const TREATMENT_TREE = {
         label: 'Ortho/Acrylic',
         color: '#2e7d32',
         treatments: [
-            { key: 'ortho_space_band',   label: 'Space maintainer & band',         price: 350,  color: '#2e7d32' },
-            { key: 'ortho_space_crown',  label: 'Space maintainer & crown',        price: 450,  color: '#1b5e20' },
-            { key: 'ortho_night_guard',  label: 'Night guard hard & soft u or l',  price: 250,  color: '#33691e' },
-            { key: 'ortho_vitalium',     label: 'VITALIUM WITH OUT ACRYLIC',       price: 1700, color: '#827717' },
+            { key: 'ortho_space_band',   label: 'Space maintainer & band',         price: 350,  color: '#43a047' },
+            { key: 'ortho_space_crown',  label: 'Space maintainer & crown',        price: 450,  color: '#00695c' },
+            { key: 'ortho_night_guard',  label: 'Night guard hard & soft u or l',  price: 250,  color: '#9e9d24' },
+            { key: 'ortho_vitalium',     label: 'VITALIUM WITH OUT ACRYLIC',       price: 1700, color: '#5d4037' },
         ]
     }
 };
@@ -427,7 +451,9 @@ function lockTreatmentPanel(toothNumber, treatmentObj) {
     document.getElementById('tpLocked').style.display = 'flex';
     const info = document.getElementById('tpLockedInfo');
     const subTxt = td.subOptionLabel ? `<div style="color:#ffd966; font-size:0.72rem; margin-top:4px;">${td.subOptionLabel}</div>` : '';
-    const priceTxt = td.price ? `<div style="color:#90caf9; font-size:0.72rem; margin-top:4px;">السعر: ${td.price} ج</div>` : '';
+    const priceTxt = td.isPontic
+        ? `<div style="color:#9aa0b4; font-size:0.72rem; margin-top:4px; font-style:italic;">السعر: حسب السن المتصل بالكونكتور</div>`
+        : (td.price ? `<div style="color:#90caf9; font-size:0.72rem; margin-top:4px;">السعر: ${td.price} ج</div>` : '');
     info.innerHTML = `
         <div style="background:${td.color}; padding:10px 16px; border-radius:20px; color:white; font-weight:bold; text-align:center; font-size:0.78rem;">${td.label}</div>
         ${subTxt}${priceTxt}
@@ -510,7 +536,8 @@ function buildSubTreatmentsUI(catKey) {
         const btn = document.createElement('button');
         btn.className = 'tp-treatment-btn';
         btn.style.background = t.color;
-        btn.innerHTML = `<span class="ttb-label">${t.label}</span><span class="ttb-price">${t.price} ج</span>`;
+        const priceLbl = t.isPontic ? 'حسب الكونكتور' : `${t.price} ج`;
+        btn.innerHTML = `<span class="ttb-label">${t.label}</span><span class="ttb-price">${priceLbl}</span>`;
         btn.addEventListener('click', () => {
             if (isReadOnly || !selectedTooth) return;
             if (t.followUp) {
@@ -767,6 +794,17 @@ function getDatabasePath() {
     return `dental lap/case data/${datePath.fullPath}/${getDoctorKey()}`;
 }
 
+// مسار "قائمة الانتظار" (waiting): الحالات تُحفظ هنا أولاً، ثم تُنقل لاحقاً للمسار الطبيعي
+// عند الضغط على زر "طلب مندوب".
+function getWaitingPath() {
+    const datePath = getCurrentDatePath();
+    return `dental lap/case data/waiting/${datePath.fullPath}/${getDoctorKey()}`;
+}
+
+// عند تحميل حالة من قائمة الانتظار بهدف التعديل، نحفظ هنا مرجع المسار الأصلي
+// لكي يقوم saveCaseToFirebase بالكتابة فوقها بدل إنشاء caseId جديد.
+let currentEditingPoolCase = null; // { year, month, day, caseId } أو null
+
 // الحصول على مسار الكاونتر الخاص بالطبيب
 function getCounterPath(doctorName, date) {
     const dateObj = new Date(date);
@@ -833,12 +871,14 @@ async function saveOrderToWorkersPath(caseData, caseId, clinicData, secretCode) 
 
 // عرض الرقم التأكيدي مكان زر رفع السكان (في وسط منطقة الأسنان)
 // ترتيب الشارة: اسم المريض (كبير وفوق) → ثم الرقم التأكيدي تحته
-function displaySecretCode(patientName, randomCode) {
+function displaySecretCode(patientName, randomCode, scannerFile) {
     const teethContainer = document.getElementById('teethContainer');
     if (!teethContainer) return;
-    // إخفاء زر رفع السكان وعرض شارة الرقم التأكيدي مكانه
+    // إخفاء زر رفع السكان ومؤشر السكان المعلّق، وعرض بادج الرقم التأكيدي
     const uploadBtn = document.getElementById('uploadScannerBtn');
     if (uploadBtn) uploadBtn.style.display = 'none';
+    const indicator = document.getElementById('scannerSelectedIndicator');
+    if (indicator) indicator.style.display = 'none';
 
     let codeDisplay = document.getElementById('secretCodeDisplay');
     if (!codeDisplay) {
@@ -847,7 +887,11 @@ function displaySecretCode(patientName, randomCode) {
         codeDisplay.className = 'secret-code-badge';
         teethContainer.appendChild(codeDisplay);
     }
+    const scannerBadge = scannerFile
+        ? `<div class="scb-scanner-file">✅ ${escapeHtml(scannerFile)}</div>`
+        : '';
     codeDisplay.innerHTML = `
+        ${scannerBadge}
         <div class="scb-patient">👤 ${escapeHtml(patientName || '')}</div>
         <div class="scb-label">🔐 الرقم التأكيدي</div>
         <div class="scb-code">${escapeHtml(randomCode || '')}</div>
@@ -933,13 +977,20 @@ async function checkIfCaseExists(patientName, date) {
     const year = dateObj.getFullYear();
     const month = String(dateObj.getMonth() + 1).padStart(2, '0');
     const day = String(dateObj.getDate()).padStart(2, '0');
-    const casesRef = database.ref(`dental lap/case data/${year}/${month}/${day}/${getDoctorKey()}`);
-    const snapshot = await casesRef.once('value');
-    const cases = snapshot.val();
-    if (!cases) return false;
-    for (const caseId in cases) {
-        if (cases[caseId].patientName === patientName && cases[caseId].date === date) {
-            return true;
+    const doctorKey = getDoctorKey();
+    // فحص المسارَين: العادي + waiting (قائمة الانتظار) لتجنّب التكرار
+    const paths = [
+        `dental lap/case data/${year}/${month}/${day}/${doctorKey}`,
+        `dental lap/case data/waiting/${year}/${month}/${day}/${doctorKey}`,
+    ];
+    for (const p of paths) {
+        const snap = await database.ref(p).once('value');
+        const cases = snap.val();
+        if (!cases) continue;
+        for (const caseId in cases) {
+            if (cases[caseId].patientName === patientName && cases[caseId].date === date) {
+                return true;
+            }
         }
     }
     return false;
@@ -1053,7 +1104,8 @@ async function uploadScannerFile() {
             try {
                 const path = `scans/${currentClinicName}/${currentCaseId}/${file.name}`;
                 const { url } = await uploadFileToStorage(file, path);
-                await database.ref(`${getDatabasePath()}/${currentCaseId}`).update({
+                const casePath = currentCasePath || `${getDatabasePath()}/${currentCaseId}`;
+                await database.ref(casePath).update({
                     scannerFile:        file.name,
                     scannerFileUrl:     url,
                     scannerStoragePath: path,
@@ -1066,9 +1118,90 @@ async function uploadScannerFile() {
                 alert("❌ حدث خطأ في رفع الملف: " + (error?.message || error));
             }
         } else {
-            alert(`📎 تم اختيار الملف: ${file.name}\n💾 سيتم رفعه تلقائياً عند الضغط على "حفظ الحالة"`);
+            updateScannerIndicator(file.name);
         }
     });
+}
+
+function updateScannerIndicator(fileName) {
+    const uploadBtn = document.getElementById('uploadScannerBtn');
+    const indicator = document.getElementById('scannerSelectedIndicator');
+    const nameEl    = document.getElementById('scannerFileName');
+    if (uploadBtn)  uploadBtn.style.display = 'none';
+    if (nameEl)     nameEl.textContent = fileName;
+    if (indicator)  indicator.style.display = 'flex';
+}
+
+function resetScannerIndicator() {
+    const indicator = document.getElementById('scannerSelectedIndicator');
+    if (indicator)  indicator.style.display = 'none';
+    // uploadBtn visibility is managed by hideSecretCode / displaySecretCode
+}
+
+function getMainCaseType() {
+    const cats = collectCaseCategories(toothTreatments);
+    if (cats.includes('zirconium'))  return 'zirconium';
+    if (cats.includes('pfm'))        return 'pfm';
+    if (cats.includes('ortho'))      return 'ortho';
+    if (cats.includes('temporary'))  return 'temporary';
+    return 'other';
+}
+
+async function saveOrderToCareerLadder(caseData, caseId) {
+    try {
+        const dp = getCurrentDatePath();
+        const mainType = getMainCaseType();
+        const hasScannerFile = !!(caseData.scannerFile);
+
+        const orderData = {
+            caseId,
+            year:       dp.year,
+            month:      dp.month,
+            day:        dp.day,
+            doctorName: currentUser?.doctorName || 'غير محدد',
+            caseType:   mainType,
+            randomCode: caseData.randomCode,
+        };
+
+        // بناء مفتاح العيادة: اسم الطبيب - المحافظة - المنطقة (مُعقَّم لمسارات Firebase)
+        const sanitize = (s) => (s || '').trim().replace(/[.#$[\]/]/g, '-');
+        const clinicKey = [
+            sanitize(currentUser?.doctorName),
+            sanitize(currentUser?.governorate),
+            sanitize(currentUser?.area)
+        ].filter(Boolean).join('-') || 'غير محدد';
+
+        let path;
+        if (!hasScannerFile) {
+            path = `dental lap/users/workers/jops/Career ladder/مندوب/استلام/${clinicKey}/${caseId}`;
+        } else if (mainType === 'zirconium') {
+            path = `dental lap/users/workers/jops/Career ladder/مندوب/الاداره/فني جبس/تفتيح مارجن/سكانر زيركون/استلام/${caseId}`;
+        } else if (mainType === 'pfm') {
+            path = `dental lap/users/workers/jops/Career ladder/مندوب/الاداره/فني جبس/تفتيح مارجن/سكانر معدن/استلام/${caseId}`;
+        } else if (mainType === 'ortho') {
+            path = `dental lap/users/workers/jops/Career ladder/مندوب/الاداره/فني جبس/طباعة ريزن/استلام/${caseId}`;
+        } else {
+            path = `dental lap/users/workers/jops/Career ladder/مندوب/استلام/${clinicKey}/${caseId}`;
+        }
+
+        await database.ref(path).set(orderData);
+
+        // تسجيل المسار في statusHistory/details داخل الحالة الرئيسية
+        try {
+            await database.ref(`${getDatabasePath()}/${caseId}/statusHistory/details`).set({
+                careerLadderPath: path,
+                hasScannerFile:   hasScannerFile,
+                caseType:         mainType,
+                addedAt:          Date.now()
+            });
+        } catch (detErr) {
+            console.error("خطأ في تسجيل statusHistory/details:", detErr);
+        }
+
+        console.log("✅ تم حفظ في Career Ladder:", path);
+    } catch (err) {
+        console.error("خطأ في حفظ Career Ladder:", err);
+    }
 }
 
 // تحديث شريط الحالة
@@ -1079,32 +1212,180 @@ function updateStatusBar(status) {
     steps.forEach((step, index) => {
         const stepNum = index + 1;
         step.classList.remove('active', 'completed');
-        if (stepNum < status)       step.classList.add('completed');
-        else if (stepNum === status) step.classList.add('active');
+        if (status > 0) {
+            if (stepNum < status)        step.classList.add('completed');
+            else if (stepNum === status) step.classList.add('active');
+        }
     });
-    // النسبة بين الخطوات الأربع: 0%، 33%، 66%، 100%
     if (fillLine) {
-        const pct = status <= 1 ? 0 : ((status - 1) / 3) * 100;
+        const pct = (status <= 1) ? 0 : ((status - 1) / 3) * 100;
         fillLine.style.width = `${pct}%`;
+    }
+    updateMotoBadge(status);
+}
+
+function updateMotoBadge(status) {
+    const badge = document.getElementById('motoBadge');
+    if (!badge) return;
+    // المواضع على progress-line بالـ RTL (right: X% من الحافة اليمنى)
+    // status 2 → موتو بين step1(يمين) وstep2 → عند 16.5% من اليمين
+    // status 3 → بين step2 وstep3 → 49.5%
+    // status 4 → بين step3 وstep4 → 82.5%
+    const positions = { 2: '16.5%', 3: '49.5%', 4: '82.5%' };
+    if (status >= 2 && positions[status]) {
+        badge.style.display = 'block';
+        badge.style.right   = positions[status];
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+// تطبيق الحالة المرئية من كائن statusHistory البوليان الجديد
+// يدعم أيضاً البنية القديمة (مفاتيح رقمية بقيم timestamp)
+function applyStatusFromHistory(statusHistory) {
+    statusHistory = statusHistory || {};
+
+    // دعم البنية القديمة (4 خطوات بمفاتيح رقمية بـ timestamp): اشتق ثم انقل +1
+    // لاستيعاب الخطوة الأولى الجديدة "الإضافة لقائمة الانتظار"
+    const hasNewKeys = ("الإضافة لقائمة الانتظار" in statusHistory) ||
+                       ("استلام الطلب" in statusHistory) ||
+                       ("ارسال مندوب للعياده" in statusHistory) ||
+                       ("استلام الحاله" in statusHistory);
+    if (!hasNewKeys && (statusHistory[1] || statusHistory[2] || statusHistory[3] || statusHistory[4])) {
+        let derived = 0;
+        for (let i = 4; i >= 1; i--) { if (statusHistory[i]) { derived = i; break; } }
+        // الحالات القديمة موجودة في المسار الطبيعي (تخطّت الـpool)، إذن step 1 مكتمل
+        const shifted = derived + 1;
+        document.querySelectorAll('.status-step').forEach(s => s.classList.remove('active', 'completed'));
+        for (let i = 1; i < shifted; i++) {
+            document.querySelector(`.status-step[data-step="${i}"]`)?.classList.add('completed');
+        }
+        document.querySelector(`.status-step[data-step="${shifted}"]`)?.classList.add('active');
+        currentOrderStatus = shifted;
+        const fl = document.getElementById('progressLineFill');
+        if (fl) fl.style.width = `${((shifted - 1) / 4) * 100}%`;
+        const badge = document.getElementById('motoBadge');
+        if (badge) badge.style.display = 'none';
+        return;
+    }
+
+    const inPool   = !!statusHistory["الإضافة لقائمة الانتظار"];
+    const arrived  = !!statusHistory["استلام الطلب"];
+    const courier  = !!statusHistory["ارسال مندوب للعياده"];
+    const received = !!statusHistory["استلام الحاله"];
+    const shipped  = !!statusHistory[5];
+
+    // إعادة ضبط جميع الخطوات
+    document.querySelectorAll('.status-step').forEach(s => s.classList.remove('active', 'completed'));
+
+    // step 1: الإضافة لقائمة الانتظار
+    if (inPool) {
+        const s1 = document.querySelector('.status-step[data-step="1"]');
+        if (s1) s1.classList.add(arrived || courier || received || shipped ? 'completed' : 'active');
+    }
+    // step 2: وصول الطلب للمعمل
+    if (arrived) {
+        const s2 = document.querySelector('.status-step[data-step="2"]');
+        if (s2) s2.classList.add(courier || received || shipped ? 'completed' : 'active');
+    }
+    // step 3: وصول المندوب للعياده
+    if (courier) {
+        const s3 = document.querySelector('.status-step[data-step="3"]');
+        if (s3) s3.classList.add(received || shipped ? 'completed' : 'active');
+    }
+    // step 4: المعمل
+    if (received) {
+        const s4 = document.querySelector('.status-step[data-step="4"]');
+        if (s4) s4.classList.add(shipped ? 'completed' : 'active');
+    }
+    // step 5: الشحن للعيادة
+    if (shipped) {
+        const s5 = document.querySelector('.status-step[data-step="5"]');
+        if (s5) s5.classList.add('active');
+    }
+
+    currentOrderStatus = shipped ? 5 : received ? 4 : courier ? 3 : arrived ? 2 : inPool ? 1 : 0;
+
+    // شريط التعبئة (5 خطوات → 4 قطاعات → 25% لكل قطاع)
+    const fillLine = document.getElementById('progressLineFill');
+    if (fillLine) {
+        let pct = 0;
+        if (shipped)        pct = 100;
+        else if (received)  pct = 75;
+        else if (courier)   pct = 50;
+        else if (arrived)   pct = 25;
+        fillLine.style.width = `${pct}%`;
+    }
+
+    // الموتوسيكل (مواقع منتصف القطاعات: 12.5%, 37.5%, 62.5%, 87.5%)
+    const badge = document.getElementById('motoBadge');
+    if (badge) {
+        if (received && !shipped) {
+            badge.style.display = 'block';
+            badge.style.right   = '62.5%';   // بين step 3 و step 4 (راجع للمعمل بالحالة)
+        } else if (courier && !received) {
+            badge.style.display = 'block';
+            badge.style.right   = '37.5%';   // بين step 2 و step 3 (مندوب رايح للعيادة)
+        } else {
+            badge.style.display = 'none';
+        }
     }
 }
 
 function updateStepDates(statusHistory) {
-    if (statusHistory) {
-        for (let i = 1; i <= 4; i++) {
-            const dateSpan = document.getElementById(`step${i}-date`);
-            if (statusHistory[i] && dateSpan) {
-                dateSpan.textContent = new Date(statusHistory[i]).toLocaleString('ar-EG');
-            }
+    if (!statusHistory) return;
+    const stepNames = {
+        1: 'الإضافة لقائمة الانتظار',
+        2: 'وصول الطلب للمعمل',
+        3: 'وصول المندوب للعياده',
+        4: 'المعمل',
+        5: 'الشحن للعيادة'
+    };
+    // ربط الخطوة الرقمية بمفتاح بوليان في البنية الجديدة (5 خطوات)
+    const newKeyForStep = {
+        1: 'الإضافة لقائمة الانتظار',
+        2: 'استلام الطلب',
+        3: 'ارسال مندوب للعياده',
+        4: 'استلام الحاله'
+    };
+
+    const tooltipLines = [];
+    for (let i = 1; i <= 5; i++) {
+        const dateSpan = document.getElementById(`step${i}-date`);
+        const numVal   = statusHistory[i];
+        const boolVal  = newKeyForStep[i] ? statusHistory[newKeyForStep[i]] : undefined;
+
+        if (numVal) {
+            const formatted = new Date(numVal).toLocaleString('ar-EG');
+            if (dateSpan) dateSpan.textContent = formatted;
+            tooltipLines.push(`${stepNames[i]}: ${formatted}`);
+        } else if (boolVal === true) {
+            if (dateSpan) dateSpan.textContent = '✅';
+            tooltipLines.push(`${stepNames[i]}: ✅ مكتملة`);
+        } else if (boolVal === false) {
+            if (dateSpan) dateSpan.textContent = '';
+            tooltipLines.push(`${stepNames[i]}: ⏳ في الانتظار`);
+        } else {
+            if (dateSpan) dateSpan.textContent = '';
         }
+    }
+    // تحديث tooltip خطوة "المعمل" (الآن step 4)
+    const tooltip = document.getElementById('step4Tooltip');
+    if (tooltip) {
+        tooltip.innerHTML = tooltipLines.length
+            ? tooltipLines.join('<br>')
+            : 'لا توجد بيانات بعد';
     }
 }
 
 function setupStatusSteps() {
     document.querySelectorAll('.status-step').forEach(step => {
         step.addEventListener('click', async () => {
-            if (isReadOnly) { alert("🔒 لا يمكن تغيير حالة الطلب في وضع القراءة فقط!"); return; }
             const stepNum = parseInt(step.dataset.step);
+            // الخطوة 1 تُفعّل تلقائياً عند الحفظ، والخطوة 2 من زر "طلب مندوب"
+            if (stepNum === 1) { alert("ℹ️ هذه المرحلة تُفعّل تلقائياً عند حفظ الحالة في قائمة الانتظار"); return; }
+            if (stepNum === 2) { alert("ℹ️ هذه المرحلة تُفعّل من زر 'طلب مندوب' داخل قائمة الانتظار"); return; }
+            if (isReadOnly) { alert("🔒 لا يمكن تغيير حالة الطلب في وضع القراءة فقط!"); return; }
             if (!currentCaseId) { alert("⚠️ الرجاء حفظ الحالة أولاً!"); return; }
             if (stepNum > currentOrderStatus + 1) { alert(`⚠️ لا يمكن الانتقال للمرحلة ${stepNum} قبل إكمال المرحلة ${currentOrderStatus}`); return; }
             if (stepNum <= currentOrderStatus) { alert(`⚠️ المرحلة ${stepNum} تم إنجازها بالفعل`); return; }
@@ -1115,19 +1396,33 @@ function setupStatusSteps() {
 
 async function updateOrderStatus(newStatus) {
     if (isReadOnly || !currentCaseId) return;
-    const caseRef = database.ref(`${getDatabasePath()}/${currentCaseId}`);
+    const casePath = currentCasePath || `${getDatabasePath()}/${currentCaseId}`;
+    const caseRef = database.ref(casePath);
     const now = Date.now();
+    // ربط رقم الخطوة بمفتاح البوليان في statusHistory (5 خطوات)
+    const newKeyForStep = {
+        1: 'الإضافة لقائمة الانتظار',
+        2: 'استلام الطلب',
+        3: 'ارسال مندوب للعياده',
+        4: 'استلام الحاله'
+    };
     try {
         const snapshot = await caseRef.once('value');
         const caseData = snapshot.val();
         if (caseData) {
             const statusHistory = caseData.statusHistory || {};
-            statusHistory[newStatus] = now;
+            const flagKey = newKeyForStep[newStatus];
+            if (flagKey) {
+                statusHistory[flagKey] = true;
+            } else {
+                // الخطوة 5 (الشحن للعيادة): نسجّل timestamp
+                statusHistory[newStatus] = now;
+            }
             await caseRef.update({ orderStatus: newStatus, statusHistory: statusHistory, lastStatusUpdate: now });
             currentOrderStatus = newStatus;
-            updateStatusBar(newStatus);
+            applyStatusFromHistory(statusHistory);
             updateStepDates(statusHistory);
-            const statusNames = {1: 'وصول الطلب للمعمل', 2: 'إرسال مندوب', 3: 'قيد العمل', 4: 'الشحن للعيادة'};
+            const statusNames = {1: 'الإضافة لقائمة الانتظار', 2: 'وصول الطلب للمعمل', 3: 'وصول المندوب للعياده', 4: 'المعمل', 5: 'الشحن للعيادة'};
             alert(`✅ تم تحديث الحالة إلى: ${statusNames[newStatus]}`);
         }
     } catch (error) { console.error("خطأ:", error); }
@@ -1158,12 +1453,41 @@ function collectCaseCategories(toothTreatments) {
     return Array.from(set);
 }
 
+// إيجاد سعر فعّال للبونتيك من السن الملاصق المتصل (مثلاً emax بـ 1300 بدل 700)
+function getPonticEffectiveData(toothNumber, treatmentsMap, connections) {
+    connections = connections || {};
+    for (const [a, b] of adjacentPairs) {
+        if (a !== toothNumber && b !== toothNumber) continue;
+        const pairKey = `${a}_${b}`;
+        if (!connections[pairKey]) continue;
+        const otherTooth = (a === toothNumber) ? b : a;
+        const neighbor = treatmentsMap[otherTooth];
+        if (!neighbor) continue;
+        const nd = getTreatmentData(neighbor);
+        if (!nd.isPontic && typeof nd.price === 'number' && nd.price > 0) {
+            return nd;
+        }
+    }
+    return null;
+}
+function getPonticEffectivePrice(toothNumber, treatmentsMap, connections) {
+    const nd = getPonticEffectiveData(toothNumber, treatmentsMap, connections);
+    return nd ? nd.price : null;
+}
+
 // حساب إجمالي سعر الحالة الحالية من toothTreatments
-function calcCaseTotalPrice(treatmentsMap) {
+// البونتيك يأخذ سعر السن الملاصق المتصل به (لو موجود)
+function calcCaseTotalPrice(treatmentsMap, connections) {
+    connections = connections || toothConnections || {};
     let total = 0;
-    for (const t of Object.values(treatmentsMap || {})) {
+    for (const [tooth, t] of Object.entries(treatmentsMap || {})) {
         const td = getTreatmentData(t);
-        if (typeof td.price === 'number') total += td.price;
+        let price = (typeof td.price === 'number') ? td.price : 0;
+        if (td.isPontic) {
+            const adopted = getPonticEffectivePrice(parseInt(tooth), treatmentsMap, connections);
+            if (adopted !== null) price = adopted;
+        }
+        total += price;
     }
     return total;
 }
@@ -1176,8 +1500,14 @@ async function saveCaseInvoice(caseData, caseId) {
     if (!doctorKey || doctorKey === 'unknown') return 0;
 
     const items = [];
+    const connections = caseData.toothConnections || {};
     Object.entries(caseData.toothTreatments || {}).forEach(([tooth, t]) => {
         const td = getTreatmentData(t);
+        let price = td.price || 0;
+        if (td.isPontic) {
+            const adopted = getPonticEffectivePrice(parseInt(tooth), caseData.toothTreatments || {}, connections);
+            if (adopted !== null) price = adopted;
+        }
         items.push({
             tooth: parseInt(tooth),
             key:   td.key || '',
@@ -1185,7 +1515,7 @@ async function saveCaseInvoice(caseData, caseId) {
             category: td.category || null,
             subOption: td.subOptionLabel || null,
             isPontic: !!td.isPontic,
-            price: td.price || 0,
+            price,
         });
     });
     const total = items.reduce((s, it) => s + (it.price || 0), 0);
@@ -1226,8 +1556,9 @@ async function loadDoctorInvoice(animateBump = false) {
     if (!doctorKey || doctorKey === 'unknown') return;
     try {
         const snap = await database.ref(`dental lap/users/doctors/data/${doctorKey}/invoiceTotal`).once('value');
-        const data = snap.val() || { amount: 0, casesCount: 0 };
-        updateDoctorInvoiceUI(data.amount || 0, data.casesCount || 0, animateBump);
+        const data = snap.val() || { outstandingAmount: 0, amount: 0, casesCount: 0 };
+        const displayAmount = (data.outstandingAmount !== undefined && data.outstandingAmount !== null) ? data.outstandingAmount : (data.amount || 0);
+        updateDoctorInvoiceUI(displayAmount, data.casesCount || 0, animateBump);
     } catch (e) {
         console.error('فشل تحميل الفاتورة الإجمالية:', e);
     }
@@ -1254,15 +1585,54 @@ function updateTreatmentsSummary() {
     const total = document.getElementById('treatmentsTotalPrice');
     if (!list || !count || !total) return;
 
-    // تجميع حسب الفئة الرئيسية
-    const grouped = {}; // catKey -> [{tooth, t}]
+    // تجميع حسب الفئة الرئيسية:
+    //  • البونتيك المتصل بكونكتور → يأخذ كاتيجوري ولون وسعر السن المجاور
+    //  • البونتيك غير المتصل → مجموعة مستقلة "بونتيك" (رمادي) + سعر = "حسب الكونكتور"
+    const grouped = {}; // catKey -> { label, color, items: [{tooth, displayLabel, color, effectivePrice, isOrphanPontic}] }
     let totalPrice = 0;
     Object.entries(toothTreatments).forEach(([tooth, treatment]) => {
         const t = getTreatmentData(treatment);
-        const catKey = t.category || 'other';
-        if (!grouped[catKey]) grouped[catKey] = { label: t.categoryLabel || 'أخرى', color: (TREATMENT_TREE[catKey]?.color) || '#546e7a', items: [] };
-        grouped[catKey].items.push({ tooth: parseInt(tooth), t });
-        if (typeof t.price === 'number') totalPrice += t.price;
+        const toothNum = parseInt(tooth);
+
+        if (t.isPontic) {
+            const neighborData = getPonticEffectiveData(toothNum, toothTreatments, toothConnections);
+            if (neighborData) {
+                // متصل → يندمج تحت كاتيجوري السن المجاور بنفس اللون والاسم والسعر
+                const catKey = neighborData.category || 'other';
+                if (!grouped[catKey]) grouped[catKey] = { label: neighborData.categoryLabel || 'أخرى', color: (TREATMENT_TREE[catKey]?.color) || '#546e7a', items: [] };
+                grouped[catKey].items.push({
+                    tooth: toothNum,
+                    displayLabel: neighborData.label,
+                    color: neighborData.color,
+                    effectivePrice: neighborData.price,
+                    isOrphanPontic: false
+                });
+                totalPrice += neighborData.price;
+            } else {
+                // غير متصل → مجموعة "بونتيك" مستقلة بدون سعر
+                const catKey = '__pontic_orphan__';
+                if (!grouped[catKey]) grouped[catKey] = { label: 'بونتيك', color: '#607d8b', items: [] };
+                grouped[catKey].items.push({
+                    tooth: toothNum,
+                    displayLabel: 'بونتيك',
+                    color: '#607d8b',
+                    effectivePrice: 0,
+                    isOrphanPontic: true
+                });
+            }
+        } else {
+            const catKey = t.category || 'other';
+            if (!grouped[catKey]) grouped[catKey] = { label: t.categoryLabel || 'أخرى', color: (TREATMENT_TREE[catKey]?.color) || '#546e7a', items: [] };
+            const price = (typeof t.price === 'number') ? t.price : 0;
+            grouped[catKey].items.push({
+                tooth: toothNum,
+                displayLabel: t.label + (t.subOptionLabel ? ` · ${t.subOptionLabel}` : ''),
+                color: t.color,
+                effectivePrice: price,
+                isOrphanPontic: false
+            });
+            totalPrice += price;
+        }
     });
 
     count.textContent = Object.keys(toothTreatments).length;
@@ -1281,13 +1651,16 @@ function updateTreatmentsSummary() {
         block.innerHTML = `<div class="ts-group-header" style="background:${g.color}">${g.label} <span class="ts-group-count">${g.items.length}</span></div>`;
         const itemsWrap = document.createElement('div');
         itemsWrap.className = 'ts-items';
-        g.items.sort((a,b) => a.tooth - b.tooth).forEach(({tooth, t}) => {
+        g.items.sort((a,b) => a.tooth - b.tooth).forEach(({tooth, displayLabel, color, effectivePrice, isOrphanPontic}) => {
             const row = document.createElement('div');
             row.className = 'ts-item';
+            const priceCell = isOrphanPontic
+                ? `<span class="ts-price" style="color:#ff6b6b; font-style:italic;">حسب الكونكتور</span>`
+                : `<span class="ts-price">${effectivePrice || 0} ج</span>`;
             row.innerHTML = `
-                <span class="ts-tooth" style="background:${t.color}">${tooth}</span>
-                <span class="ts-label">${t.label}${t.subOptionLabel ? ` · <em>${t.subOptionLabel}</em>` : ''}</span>
-                <span class="ts-price">${t.price || 0} ج</span>
+                <span class="ts-tooth" style="background:${color}">${tooth}</span>
+                <span class="ts-label">${displayLabel}</span>
+                ${priceCell}
             `;
             itemsWrap.appendChild(row);
         });
@@ -1305,43 +1678,102 @@ async function saveCaseToFirebase() {
 
     const notes = document.getElementById('notes').value.trim();
 
-    // التاريخ يتم حسابه تلقائياً من تاريخ اليوم
+    if (Object.keys(toothTreatments).length === 0) { alert("⚠️ الرجاء تحديد الأسنان والعلاجات أولاً!"); return false; }
+
+    // التحقق من البونتيك المتصل بكونكتور
+    const orphanPontics = [];
+    for (const [tooth, treatment] of Object.entries(toothTreatments)) {
+        const td = getTreatmentData(treatment);
+        if (td.isPontic) {
+            const adopted = getPonticEffectivePrice(parseInt(tooth), toothTreatments, toothConnections);
+            if (adopted === null || adopted <= 0) orphanPontics.push(tooth);
+        }
+    }
+    if (orphanPontics.length > 0) {
+        alert(`⚠️ لا يمكن حفظ الحالة!\n\nالبونتيك التالي غير متصل بكونكتور بسن مجاور له علاج:\nالأسنان: ${orphanPontics.join('، ')}\n\n🔗 الرجاء تفعيل الكونكتور بين البونتيك والسن المجاور له علاج (كراون/زيركون/إلخ) قبل الحفظ.`);
+        return false;
+    }
+
+    const doctorKey = getDoctorKey();
+    const now = Date.now();
+
+    // ===== الفرع 1: تحديث حالة موجودة في قائمة الانتظار (waiting) =====
+    if (currentEditingPoolCase && currentCaseId) {
+        const ed = currentEditingPoolCase;
+        const editPath = `dental lap/case data/waiting/${ed.year}/${ed.month}/${ed.day}/${doctorKey}/${ed.caseId}`;
+        try {
+            const snap = await database.ref(editPath).once('value');
+            const existing = snap.val();
+            if (!existing) {
+                alert("⚠️ الحالة الأصلية غير موجودة في قائمة الانتظار (قد تكون حُذفت أو أُرسلت).");
+                currentEditingPoolCase = null;
+                return false;
+            }
+            const computedTotal = calcCaseTotalPrice(toothTreatments);
+            const updated = Object.assign({}, existing, {
+                patientName, notes, toothTreatments, toothConnections,
+                total: computedTotal,
+                paidAmount: existing.paidAmount || 0,
+                remainingAmount: Math.max(0, computedTotal - (existing.paidAmount || 0)),
+                isPaid: (computedTotal - (existing.paidAmount || 0)) <= 0,
+                lastEditedAt: now,
+            });
+            // رفع ملف معلّق لو موجود
+            if (pendingUploadFile) {
+                try {
+                    const storagePath = `scans/${currentClinicName}/${ed.caseId}/${pendingUploadFile.name}`;
+                    const { url } = await uploadFileToStorage(pendingUploadFile, storagePath);
+                    updated.scannerFile        = pendingUploadFile.name;
+                    updated.scannerFileUrl     = url;
+                    updated.scannerStoragePath = storagePath;
+                    updated.scannerUploadedAt  = now;
+                    pendingUploadFile = null;
+                } catch (e) { console.error('فشل رفع الملف:', e); }
+            }
+            await database.ref(editPath).set(updated);
+            // تحديث المؤشّر المسطّح
+            await database.ref(`dental lap/users/doctors/data/${doctorKey}/waiting/${ed.caseId}`)
+                .update({ patientName, total: computedTotal });
+            applyStatusFromHistory(updated.statusHistory);
+            updateStepDates(updated.statusHistory);
+            displaySecretCode(patientName, updated.randomCode || '', updated.scannerFile || null);
+            alert(`✅ تم تحديث الحالة في قائمة الانتظار`);
+            return true;
+        } catch (e) {
+            console.error("خطأ في تحديث حالة pool:", e);
+            alert("❌ فشل تحديث الحالة: " + e.message);
+            return false;
+        }
+    }
+
+    // ===== الفرع 2: حفظ حالة جديدة في قائمة الانتظار (waiting) =====
     const today = new Date();
     const date  = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
-    if (Object.keys(toothTreatments).length === 0) { alert("⚠️ الرجاء تحديد الأسنان والعلاجات أولاً!"); return false; }
-
-    const doctorKey = getDoctorKey();
-
     const exists = await checkIfCaseExists(patientName, date);
-    if (exists) { alert("⚠️ لا يمكن حفظ الحالة! يوجد حالة سابقة بنفس اسم المريض والتاريخ.\n\n🔒 تم تحويل هذه الحالة للقراءة فقط."); await loadExistingCase(patientName, date); return false; }
+    if (exists) { alert("⚠️ لا يمكن حفظ الحالة! يوجد حالة سابقة بنفس اسم المريض والتاريخ."); return false; }
 
-    // الحصول على العداد اليومي (تحت اسم الطبيب)
     const counter = await getDailyCounterAndReturn(doctorKey, date);
-
-    // توليد الرقم التأكيدي الجديد (بدون أصفار)
     const secretCodeV2 = await generateSecretCodeV2(currentClinicName, date, counter);
     currentSecretCode = secretCodeV2;
 
-    // توليد caseId بصيغة: اسم المريض-الرقم اليومي (مثال: يوسف-1)
     const caseId = `${patientName}-${counter}`;
     currentCaseId = caseId;
-    // مسح أي محادثة سابقة كي تظهر الرسالة الترحيبية باسم المريض الجديد
     currentConversation = [];
     const aiMsgsResetEl = document.getElementById('aiMessages');
     if (aiMsgsResetEl) aiMsgsResetEl.innerHTML = '';
     updateAiBarVisibility();
 
-    const now = Date.now();
-    const statusHistory = { 1: now };
-    let finalOrderStatus = uploadedFileName ? 3 : 1;
-    if (uploadedFileName) statusHistory[3] = now;
-
+    // الحالة الجديدة في قائمة الانتظار: الخطوة 1 فقط مفعّلة
+    const statusHistory = {
+        "الإضافة لقائمة الانتظار": true,
+        "استلام الطلب":          false,
+        "ارسال مندوب للعياده":    false,
+        "استلام الحاله":          false,
+    };
+    const finalOrderStatus = 1;
     const datePath = getCurrentDatePath();
 
-    // ✦ المسار الرئيسي: dental lap/case data/{year}/{month}/{day}/{doctorName}/{caseId}
-    //   لا نكرر الحقول التي يمكن استخراجها من المسار نفسه
-    //   (clinicName / createdAt / date / day / doctorName / month / secretCode / timestamp / year)
     const caseData = {
         caseId,
         randomCode: secretCodeV2,
@@ -1351,12 +1783,14 @@ async function saveCaseToFirebase() {
         toothConnections,
         orderStatus: finalOrderStatus,
         statusHistory,
-        isReadOnly: true,
+        createdAt: now,
+        date,                                              // للتوافق مع checkIfCaseExists
+        _year: datePath.year, _month: datePath.month, _day: datePath.day, // مرجع التاريخ الأصلي
+        isReadOnly: false,                                 // قابلة للتعديل أثناء وجودها في الـpool
     };
     if (uploadedFileName) { caseData.scannerFile = uploadedFileName; caseData.scannerUploadedAt = now; }
 
     try {
-        // رفع الملف المعلّق (لو الطبيب اختار ملف قبل الحفظ) إلى Firebase Storage وربطه بالحالة
         if (pendingUploadFile) {
             try {
                 const storagePath = `scans/${currentClinicName}/${caseId}/${pendingUploadFile.name}`;
@@ -1372,74 +1806,40 @@ async function saveCaseToFirebase() {
             }
         }
 
-        // 1. حساب إجمالي الحالة (المبلغ المطلوب) ثم تضمين بيانات الدفع داخل الحالة الرئيسية
         const computedTotal = calcCaseTotalPrice(toothTreatments);
         caseData.total           = computedTotal;
         caseData.paidAmount      = 0;
         caseData.remainingAmount = computedTotal;
         caseData.isPaid          = computedTotal === 0;
 
-        // 2. حفظ البيانات الأساسية تحت المسار الرئيسي:
-        //    dental lap/case data/{year}/{month}/{day}/{doctorName}/{caseId}
-        await database.ref(`${getDatabasePath()}/${caseId}`).set(caseData);
+        // ✦ الحفظ في مسار waiting فقط — لا توجد كتابات جانبية في هذه المرحلة.
+        //   كل المسارات الأخرى (Secret Index / Workers / Career Ladder / Case Type
+        //   / Invoice / Flat Pointer) تُكتب لاحقاً عند الضغط على "طلب مندوب".
+        await database.ref(`${getWaitingPath()}/${caseId}`).set(caseData);
 
-        // 3. حفظ الفهارس: العام (اسم المريض → الرقم التأكيدي) و المفصل
-        await saveToSecretCodeIndex(secretCodeV2, caseId, patientName, datePath, doctorKey);
-
-        // 4. جلب بيانات العيادة وحفظ الطلب في مسار المندوب
-        const clinicData = await getClinicData(currentClinicName);
-        await saveOrderToWorkersPath(caseData, caseId, clinicData, secretCodeV2);
-
-        // 5. مؤشر الفئة (مرشد فقط — يدلّ على الموقع في المسار الرئيسي):
-        //    dental lap/case data/case type/{categoryKey}/{caseId} = { year, month, day, doctorName }
-        try {
-            const cats    = collectCaseCategories(toothTreatments);
-            const pointer = { year: datePath.year, month: datePath.month, day: datePath.day, doctorName: doctorKey };
-            const updates = {};
-            cats.forEach(catKey => {
-                updates[`dental lap/case data/case type/${catKey}/${caseId}`] = pointer;
-            });
-            if (Object.keys(updates).length > 0) await database.ref().update(updates);
-        } catch (catErr) {
-            console.error('فشل حفظ مؤشر case type:', catErr);
-        }
-
-        // 6. حفظ فاتورة الحالة وتحديث الفاتورة الإجمالية للطبيب
-        try {
-            await saveCaseInvoice(caseData, caseId);
-        } catch (invErr) {
-            console.error('فشل تحديث الفاتورة:', invErr);
-        }
-
-        // 7. مؤشر مسطّح تحت الطبيب — مجرد بيانات إرشاد عن مكان الحالة في المسار الرئيسي
-        //    dental lap/users/doctors/data/{doctorKey}/cases/{caseId} = { year, month, day, doctorName, caseId, patientName }
-        try {
-            const flatPointer = {
-                year:        datePath.year,
-                month:       datePath.month,
-                day:         datePath.day,
-                doctorName:  doctorKey,
-                caseId,
-                patientName,
-            };
-            await database.ref(`dental lap/users/doctors/data/${doctorKey}/cases/${caseId}`).set(flatPointer);
-        } catch (flatErr) {
-            console.error('فشل حفظ مؤشر الطبيب المسطّح:', flatErr);
-        }
+        // مؤشر مسطّح تحت الطبيب لاكتشاف كل الحالات في قائمة الانتظار بسرعة
+        await database.ref(`dental lap/users/doctors/data/${doctorKey}/waiting/${caseId}`).set({
+            year: datePath.year, month: datePath.month, day: datePath.day,
+            doctorName: doctorKey, caseId, patientName, createdAt: now,
+            total: computedTotal,
+        });
 
         currentOrderStatus = finalOrderStatus;
-        updateStatusBar(finalOrderStatus);
+        applyStatusFromHistory(statusHistory);
         updateStepDates(statusHistory);
+        displaySecretCode(patientName, secretCodeV2, caseData.scannerFile || null);
 
-        // عرض اسم المريض + الرقم التأكيدي مكان زر الرفع (بدون أي إشعارات)
-        displaySecretCode(patientName, secretCodeV2);
-
-        setReadOnlyMode(true);
+        // الحالة لا تزال قابلة للتعديل (في الـpool) — نفعّل وضع تحرير الـpool
+        currentEditingPoolCase = { year: datePath.year, month: datePath.month, day: datePath.day, caseId };
+        currentCasePath = `${getWaitingPath()}/${caseId}`;
+        _lastConversationLength = 0;
+        attachCaseListener();
+        updateWaitingBadge();
         return true;
-    } catch (error) { 
-        console.error("خطأ:", error); 
-        alert("❌ حدث خطأ في حفظ الحالة: " + error.message); 
-        return false; 
+    } catch (error) {
+        console.error("خطأ:", error);
+        alert("❌ حدث خطأ في حفظ الحالة: " + error.message);
+        return false;
     }
 }
 
@@ -1463,6 +1863,11 @@ async function loadExistingCase(patientName, date) {
 function loadCaseToDashboard(caseData) {
     currentCaseId = caseData.caseId;
     currentSecretCode = caseData.randomCode || null;
+    if (caseData._year && caseData._month && caseData._day) {
+        currentCasePath = `dental lap/case data/${caseData._year}/${caseData._month}/${caseData._day}/${getDoctorKey()}/${caseData.caseId}`;
+    } else {
+        currentCasePath = `${getDatabasePath()}/${caseData.caseId}`;
+    }
 
     document.getElementById('patientName').value = caseData.patientName || '';
     document.getElementById('notes').value = caseData.notes || '';
@@ -1474,7 +1879,14 @@ function loadCaseToDashboard(caseData) {
         convo = Object.keys(convo).sort((a,b) => Number(a)-Number(b)).map(k => convo[k]);
     }
     currentConversation = convo;
+    _lastConversationLength = currentConversation.length;
     rebuildAiMessagesUI(currentConversation);
+    attachCaseListener();
+
+    // مسح newNews لما الطبيب يفتح الحالة
+    if (currentCasePath && caseData.newNews) {
+        database.ref(currentCasePath + '/newNews').set(false).catch(() => {});
+    }
 
     toothTreatments = caseData.toothTreatments || {};
     toothConnections = caseData.toothConnections || {};
@@ -1487,7 +1899,7 @@ function loadCaseToDashboard(caseData) {
     updateTreatmentsSummary();
 
     currentOrderStatus = caseData.orderStatus || 1;
-    updateStatusBar(currentOrderStatus);
+    applyStatusFromHistory(caseData.statusHistory);
     updateStepDates(caseData.statusHistory);
     uploadedFileName = caseData.scannerFile || null;
     currentTreatment = null;
@@ -1497,7 +1909,7 @@ function loadCaseToDashboard(caseData) {
     updateSelectedCount();
 
     if (currentSecretCode) {
-        displaySecretCode(caseData.patientName || '', currentSecretCode);
+        displaySecretCode(caseData.patientName || '', currentSecretCode, caseData.scannerFile || null);
     } else {
         hideSecretCode();
     }
@@ -1550,8 +1962,8 @@ function showCaseDetails(caseData) {
     }
     treatmentsHtml += '</div>';
 
-    const statusNames = {1: '📦 وصول الطلب للمعمل', 2: '🚚 إرسال مندوب', 3: '⚙️ قيد العمل', 4: '🏥 الشحن للعيادة'};
-    const progressPercentage = ((caseData.orderStatus - 1) / 3) * 100;
+    const statusNames = {1: '📥 الإضافة لقائمة الانتظار', 2: '📦 وصول الطلب للمعمل', 3: '🛵 وصول المندوب للعياده', 4: '🏭 المعمل', 5: '🏥 الشحن للعيادة'};
+    const progressPercentage = Math.max(0, Math.min(100, ((caseData.orderStatus - 1) / 4) * 100));
 
     card.innerHTML = `
         <h3 style="color:#ffb74d; text-align:center;">📋 تفاصيل الحالة</h3>
@@ -1598,111 +2010,6 @@ function buildPaymentBadge(caseData) {
     };
 }
 
-// عرض كل حالات الطبيب من قاعدة البيانات (بكل التواريخ) مع حالة الدفع
-// يقرأ المؤشّرات المسطّحة تحت الطبيب ثم يستخرج البيانات الكاملة من المسار الرئيسي
-async function showCasesRecords() {
-    const doctorKey = getDoctorKey();
-    if (!doctorKey || doctorKey === 'unknown') { alert('⚠️ لم يتم التعرف على الطبيب الحالي'); return; }
-
-    const snapshot = await database.ref(`dental lap/users/doctors/data/${doctorKey}/cases`).once('value');
-    const pointers = snapshot.val();
-    if (!pointers || Object.keys(pointers).length === 0) {
-        alert("📭 لا توجد حالات مسجلة لهذا الطبيب حتى الآن");
-        return;
-    }
-
-    // استرجاع البيانات الكاملة من المسار الرئيسي لكل مؤشّر
-    const pointerArr = Object.values(pointers);
-    const fetched = await Promise.all(pointerArr.map(async p => {
-        try {
-            const path = `dental lap/case data/${p.year}/${p.month}/${p.day}/${p.doctorName}/${p.caseId}`;
-            const snap = await database.ref(path).once('value');
-            const data = snap.val();
-            if (!data) return null;
-            // ندمج المؤشر داخل الكائن لكي تظل سنة/شهر/يوم متاحة للعرض
-            return Object.assign({}, data, {
-                _year: p.year, _month: p.month, _day: p.day,
-                _datePath: `${p.year}/${p.month}/${p.day}`,
-            });
-        } catch (e) { console.error('فشل قراءة الحالة:', p, e); return null; }
-    }));
-    const cases = fetched.filter(c => c && c.caseId);
-    if (cases.length === 0) {
-        alert("📭 لا توجد بيانات حالات قابلة للعرض");
-        return;
-    }
-
-    const overlay = document.createElement('div');
-    overlay.className = 'records-overlay';
-    const card = document.createElement('div');
-    card.className = 'records-card';
-    card.innerHTML = `
-        <h3 style="color:#ffb74d; text-align:center;">📋 سجل كل الحالات - د. ${escapeHtml(currentUser?.doctorName || '')}</h3>
-        <div style="background:#1a1a2a; padding:10px; border-radius:16px; margin-bottom:15px; text-align:center;">
-            <span style="color:#ffb74d;">📚 يعرض كل الحالات المحفوظة في قاعدة البيانات (كل التواريخ)</span><br>
-            <span style="color:#ffb74d;">🔒 جميع الحالات المسجلة للقراءة فقط ولا يمكن تعديلها</span>
-        </div>
-        <div id="casesList"></div>
-        <button class="close-records" style="background:#e53935; margin-top:20px; padding:8px 20px; border-radius:40px; border:none; color:white; cursor:pointer;">إغلاق</button>
-    `;
-
-    const listDiv = card.querySelector('#casesList');
-    // ترتيب من الأحدث للأقدم بناءً على أول تسجيل لحالة الطلب (statusHistory[1]) ثم على رقم الحالة
-    const sortedCases = cases.slice().sort((a, b) => {
-        const ta = (a.statusHistory && a.statusHistory[1]) || 0;
-        const tb = (b.statusHistory && b.statusHistory[1]) || 0;
-        if (tb !== ta) return tb - ta;
-        return (b.caseId || '').localeCompare(a.caseId || '');
-    });
-    const statusNames = {1: '📦 وصول الطلب', 2: '🚚 إرسال مندوب', 3: '⚙️ قيد العمل', 4: '🏥 الشحن للعيادة'};
-
-    sortedCases.forEach(caseData => {
-        const caseDiv = document.createElement('div');
-        caseDiv.className = 'case-item';
-        const progressPercentage = ((caseData.orderStatus - 1) / 3) * 100;
-        const { hasZircon, hasPorcelain } = getTreatmentTypeFromCase(caseData.toothTreatments || {});
-        let treatmentBadge = '';
-        if (hasZircon && hasPorcelain) treatmentBadge = '<span style="background:#c2185b; color:white; padding:2px 8px; border-radius:12px; font-size:11px; margin-right:5px;">✨ زيركون</span><span style="background:#2e7d32; color:white; padding:2px 8px; border-radius:12px; font-size:11px;">🏺 بورسلين</span>';
-        else if (hasZircon) treatmentBadge = '<span style="background:#c2185b; color:white; padding:2px 8px; border-radius:12px; font-size:11px;">✨ زيركونيوم</span>';
-        else if (hasPorcelain) treatmentBadge = '<span style="background:#2e7d32; color:white; padding:2px 8px; border-radius:12px; font-size:11px;">🏺 بورسلين</span>';
-
-        const pay = buildPaymentBadge(caseData);
-
-        caseDiv.innerHTML = `
-            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-                <div style="flex:2;">
-                    <p><strong>👤 المريض:</strong> ${escapeHtml(caseData.patientName)}</p>
-                    <p><strong>🔐 الرقم التأكيدي:</strong> <span style="font-family: monospace; font-size: 16px; color: #ffd700;">${escapeHtml(caseData.randomCode || 'غير متوفر')}</span></p>
-                    <p><strong>🏥 اسم العيادة:</strong> ${escapeHtml(currentClinicName || '')}</p>
-                    <p><strong>📅 التاريخ:</strong> ${escapeHtml(caseData._datePath || `${caseData._year || ''}/${caseData._month || ''}/${caseData._day || ''}`)}</p>
-                    <p><strong>📊 الحالة:</strong> ${statusNames[caseData.orderStatus] || 'جديد'}</p>
-                    <p><strong>💳 الدفع:</strong> ${pay.badge}</p>
-                    ${pay.line}
-                    <p>${treatmentBadge}</p>
-                    ${caseData.scannerFile ? `<p><strong>📎 ملف:</strong> ${escapeHtml(caseData.scannerFile)}</p>` : ''}
-                </div>
-                <div style="flex:1; min-width:120px;">
-                    <div style="background:#2a2a38; border-radius:20px; overflow:hidden; height:8px;">
-                        <div style="width:${progressPercentage}%; height:100%; background:linear-gradient(90deg, #4caf50, #ffd700, #ff9800, #ff5722); border-radius:20px 0 0 20px;"></div>
-                    </div>
-                    <p style="text-align:center; margin-top:5px; font-size:11px;">${Math.round(progressPercentage)}%</p>
-                </div>
-            </div>
-            <div style="display:flex; gap:8px; margin-top:12px;">
-                <button class="view-case-btn" style="background:#2e7d32; border:none; color:white; padding:6px 12px; border-radius:20px; cursor:pointer;">🔍 عرض التفاصيل</button>
-                <button class="load-case-btn" style="background:#ff8f00; border:none; color:white; padding:6px 12px; border-radius:20px; cursor:pointer;">📂 تحميل للواجهة</button>
-            </div>
-        `;
-        listDiv.appendChild(caseDiv);
-        caseDiv.querySelector('.view-case-btn').addEventListener('click', (e) => { e.stopPropagation(); showCaseDetails(caseData); });
-        caseDiv.querySelector('.load-case-btn').addEventListener('click', (e) => { e.stopPropagation(); loadCaseToDashboard(caseData); closeOverlayAnimated(overlay); });
-    });
-
-    card.querySelector('.close-records').addEventListener('click', () => closeOverlayAnimated(overlay));
-    overlay.appendChild(card);
-    document.body.appendChild(overlay);
-}
-
 function resetForm() {
     // تم حذف رسائل التأكيد لطلب المستخدم — البدء فوراً في حالة جديدة بدون تحذيرات
 
@@ -1720,22 +2027,39 @@ function resetForm() {
     selectedTooth = null;
     currentTreatment = null;
     currentCaseId = null;
+    currentCasePath = null;
     uploadedFileName = null;
     pendingUploadFile = null;
-    currentOrderStatus = 1;
+    currentOrderStatus = 0;
     currentSecretCode = null;
-    updateStatusBar(1);
+    currentEditingPoolCase = null;
+    updateStatusBar(0);
+    // مسح علامات ✅ والتواريخ في خطوات البار العلوي (5 خطوات الآن) + إعادة الـ tooltip
+    for (let i = 1; i <= 5; i++) {
+        const ds = document.getElementById(`step${i}-date`);
+        if (ds) ds.textContent = '';
+    }
+    const step4Tooltip = document.getElementById('step4Tooltip');
+    if (step4Tooltip) step4Tooltip.innerHTML = 'لا توجد بيانات بعد';
+    // إخفاء الموتوسيكل وإعادة شريط التعبئة
+    const fl = document.getElementById('progressLineFill');
+    if (fl) fl.style.width = '0%';
+    const mb = document.getElementById('motoBadge');
+    if (mb) mb.style.display = 'none';
     resetTreatmentPanel();
     updateSelectedCount();
     updateTreatmentsSummary();
     hideSecretCode();
+    resetScannerIndicator();
     setReadOnlyMode(false);
 
     // Reset AI conversation
     currentConversation = [];
+    _lastConversationLength = 0;
     const aiMessages = document.getElementById('aiMessages');
     if (aiMessages) aiMessages.innerHTML = '';
     updateAiBarVisibility();
+    detachCaseListener();
 }
 
 function escapeHtml(str) {
@@ -1773,7 +2097,28 @@ function addConnectionDots() {
             // الإزاحة = نصف قُطر النقطة (18/2 = 9)
             dot.style.left = (midX - 9) + 'px';
             dot.style.top  = (midY - 9) + 'px';
-            dot.addEventListener('click', (e) => { e.stopPropagation(); if (!isReadOnly) { dot.classList.toggle('connected'); toothConnections[pairKey] = dot.classList.contains('connected'); } });
+            dot.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (isReadOnly) return;
+                // منع التفعيل لو السنّتين الملاصقتين مش معالَجَتين (الإلغاء مسموح دائماً)
+                const isCurrentlyConnected = dot.classList.contains('connected');
+                if (!isCurrentlyConnected) {
+                    const t1HasTx = !!toothTreatments[pair[0]];
+                    const t2HasTx = !!toothTreatments[pair[1]];
+                    if (!t1HasTx || !t2HasTx) {
+                        dot.classList.remove('invalid-flash');
+                        // إعادة تشغيل الأنيميشن
+                        void dot.offsetWidth;
+                        dot.classList.add('invalid-flash');
+                        setTimeout(() => dot.classList.remove('invalid-flash'), 700);
+                        return;
+                    }
+                }
+                dot.classList.toggle('connected');
+                toothConnections[pairKey] = dot.classList.contains('connected');
+                // إعادة حساب أسعار البونتيك في الملخّص فور تغيّر الكونكتور
+                updateTreatmentsSummary();
+            });
             teethContainer.appendChild(dot);
         }
     });
@@ -1960,7 +2305,8 @@ async function handleEditCross(crossValue, patientName) {
     if (!crossValue) { alert("⚠️ الرجاء إدخال قيمة الكروس الجديدة"); return false; }
     if (!currentCaseId) { alert("⚠️ لا توجد حالة نشطة"); return false; }
     try {
-        const caseRef = database.ref(`${getDatabasePath()}/${currentCaseId}`);
+        const casePath = currentCasePath || `${getDatabasePath()}/${currentCaseId}`;
+        const caseRef = database.ref(casePath);
         const currentNotes = document.getElementById('notes').value;
         const newNote = `[تعديل كروس - ${new Date().toLocaleString('ar-EG')}] تم تعديل الكروس إلى: ${crossValue}\n${currentNotes}`;
         await caseRef.update({ crossValue: crossValue, notes: newNote, lastModified: Date.now(), lastModifiedBy: 'customer_service' });
@@ -1973,7 +2319,8 @@ async function handleAddNote(noteText, patientName) {
     if (!noteText) { alert("⚠️ الرجاء إدخال الملحوظة"); return false; }
     if (!currentCaseId) { alert("⚠️ لا توجد حالة نشطة"); return false; }
     try {
-        const caseRef = database.ref(`${getDatabasePath()}/${currentCaseId}`);
+        const casePath = currentCasePath || `${getDatabasePath()}/${currentCaseId}`;
+        const caseRef = database.ref(casePath);
         const currentNotes = document.getElementById('notes').value;
         const newNote = `[ملحوظة جديدة - ${new Date().toLocaleString('ar-EG')}] ${noteText}\n${currentNotes}`;
         await caseRef.update({ notes: newNote, lastModified: Date.now(), lastModifiedBy: 'customer_service' });
@@ -1986,7 +2333,8 @@ async function handleChangeSomething(changeType, changeValue, patientName) {
     if (!changeValue) { alert("⚠️ الرجاء إدخال القيمة الجديدة"); return false; }
     if (!currentCaseId) { alert("⚠️ لا توجد حالة نشطة"); return false; }
     try {
-        const caseRef = database.ref(`${getDatabasePath()}/${currentCaseId}`);
+        const casePath = currentCasePath || `${getDatabasePath()}/${currentCaseId}`;
+        const caseRef = database.ref(casePath);
         const updateData = { lastModified: Date.now(), lastModifiedBy: 'customer_service' };
         switch(changeType) {
             case 'date': updateData.date = changeValue; break;
@@ -2005,7 +2353,8 @@ async function handleCancelCase(reason, patientName) {
     if (!currentCaseId) { alert("⚠️ لا توجد حالة نشطة"); return false; }
     if (!confirm(`⚠️ هل أنت متأكد من إلغاء حالة المريض "${patientName}"؟\n\nهذا الإجراء لا يمكن التراجع عنه!`)) return false;
     try {
-        const caseRef = database.ref(`${getDatabasePath()}/${currentCaseId}`);
+        const casePath = currentCasePath || `${getDatabasePath()}/${currentCaseId}`;
+        const caseRef = database.ref(casePath);
         await caseRef.update({ status: 'cancelled', cancelledAt: Date.now(), cancelReason: reason, cancelledBy: 'customer_service' });
         return true;
     } catch (error) { console.error(error); return false; }
@@ -2029,9 +2378,12 @@ document.addEventListener('DOMContentLoaded', () => {
     updateAiBarVisibility();
 
     document.getElementById('uploadScannerBtn').addEventListener('click', uploadScannerFile);
+    const scannerChangeBtn = document.getElementById('scannerChangeBtn');
+    if (scannerChangeBtn) scannerChangeBtn.addEventListener('click', uploadScannerFile);
     document.getElementById('saveBtnDashboard').addEventListener('click', saveCaseToFirebase);
     document.getElementById('newBtnDashboard').addEventListener('click', resetForm);
-    document.getElementById('recordBtnDashboard').addEventListener('click', showCasesRecords);
+    document.getElementById('recordBtnDashboard').addEventListener('click', showTabbedRecords);
+    updateWaitingBadge();
     document.getElementById('logoutBtn').addEventListener('click', handleLogout);
 
     // Treatment sidebar
@@ -2146,3 +2498,463 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 });
+// ============================================================================
+// 📥 قائمة الانتظار + السجل — نافذة واحدة بتبويبين
+// ============================================================================
+
+// تحديث شارة عدد حالات الانتظار على زر السجل
+async function updateWaitingBadge() {
+    try {
+        const doctorKey = getDoctorKey();
+        if (!doctorKey || doctorKey === 'unknown') return;
+        const snap = await database.ref(`dental lap/users/doctors/data/${doctorKey}/waiting`).once('value');
+        const count = snap.exists() ? Object.keys(snap.val() || {}).length : 0;
+        const badge = document.getElementById('waitingBadge');
+        if (!badge) return;
+        if (count > 0) {
+            badge.textContent = count;
+            badge.style.display = 'inline-block';
+        } else {
+            badge.style.display = 'none';
+        }
+    } catch (e) { console.error('badge error:', e); }
+}
+
+// نافذة سجل واحدة بتبويبين: 📋 السجل العادي / ⏳ قائمة الانتظار
+async function showTabbedRecords() {
+    const doctorKey = getDoctorKey();
+    if (!doctorKey || doctorKey === 'unknown') { alert('⚠️ لم يتم التعرف على الطبيب الحالي'); return; }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'records-overlay';
+    const card = document.createElement('div');
+    card.className = 'records-card';
+    card.style.maxWidth = '780px';
+
+    card.innerHTML = `
+      <button class="close-records close-records-floating" title="إغلاق" aria-label="إغلاق">✕</button>
+      <h3 style="color:#ffb74d; text-align:center; margin-bottom:12px;">📋 سجل الحالات</h3>
+      <div id="recordsTabs" style="display:flex; gap:0; margin-bottom:16px; border-radius:14px; overflow:hidden; border:1px solid #444;">
+        <button id="tabNormal" class="recTab recTabActive" style="flex:1; padding:12px; font-size:15px; border:none; cursor:pointer; background:#ffb74d; color:#1a1a2a; font-weight:bold; transition:all .2s;">📋 السجل العادي</button>
+        <button id="tabWaiting" class="recTab" style="flex:1; padding:12px; font-size:15px; border:none; cursor:pointer; background:#2a2a38; color:#bbb; font-weight:bold; transition:all .2s; position:relative;">⏳ قائمة الانتظار <span id="tabWaitingCount" style="display:none; background:#f44336; color:white; border-radius:50%; min-width:18px; height:18px; font-size:10px; line-height:18px; text-align:center; padding:0 4px; position:absolute; top:4px; right:8px;"></span></button>
+      </div>
+      <div id="tabContentNormal" style="display:block;"><p style="color:#888; text-align:center; padding:20px;">⏳ جاري التحميل...</p></div>
+      <div id="tabContentWaiting" style="display:none;"><p style="color:#888; text-align:center; padding:20px;">⏳ جاري التحميل...</p></div>
+    `;
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+
+    card.querySelector('.close-records').addEventListener('click', () => closeOverlayAnimated(overlay));
+
+    const tabNormal  = card.querySelector('#tabNormal');
+    const tabWaiting = card.querySelector('#tabWaiting');
+    const cNormal    = card.querySelector('#tabContentNormal');
+    const cWaiting   = card.querySelector('#tabContentWaiting');
+
+    function switchTab(tab) {
+        if (tab === 'normal') {
+            tabNormal.style.background = '#ffb74d'; tabNormal.style.color = '#1a1a2a';
+            tabWaiting.style.background = '#2a2a38'; tabWaiting.style.color = '#bbb';
+            cNormal.style.display = 'block'; cWaiting.style.display = 'none';
+        } else {
+            tabWaiting.style.background = '#ff9800'; tabWaiting.style.color = '#1a1a2a';
+            tabNormal.style.background = '#2a2a38'; tabNormal.style.color = '#bbb';
+            cWaiting.style.display = 'block'; cNormal.style.display = 'none';
+        }
+    }
+    tabNormal.addEventListener('click', () => switchTab('normal'));
+    tabWaiting.addEventListener('click', () => switchTab('waiting'));
+
+    // ── تحميل التبويبين بالتوازي ──
+    loadNormalTab(cNormal, doctorKey, overlay);
+    loadWaitingTab(cWaiting, doctorKey, overlay, card);
+}
+
+// تبويب السجل العادي
+async function loadNormalTab(container, doctorKey, overlay) {
+    try {
+        const snapshot = await database.ref(`dental lap/users/doctors/data/${doctorKey}/cases`).once('value');
+        const pointers = snapshot.val();
+        if (!pointers || Object.keys(pointers).length === 0) {
+            container.innerHTML = '<p style="color:#888; text-align:center; padding:20px;">📭 لا توجد حالات مسجلة حتى الآن</p>';
+            return;
+        }
+        const pointerArr = Object.values(pointers);
+        const fetched = await Promise.all(pointerArr.map(async p => {
+            try {
+                const path = `dental lap/case data/${p.year}/${p.month}/${p.day}/${p.doctorName}/${p.caseId}`;
+                const snap = await database.ref(path).once('value');
+                const data = snap.val();
+                if (!data) return null;
+                return Object.assign({}, data, { _year: p.year, _month: p.month, _day: p.day, _datePath: `${p.year}/${p.month}/${p.day}` });
+            } catch (e) { return null; }
+        }));
+        const cases = fetched.filter(c => c && c.caseId);
+        if (cases.length === 0) { container.innerHTML = '<p style="color:#888; text-align:center; padding:20px;">📭 لا توجد بيانات حالات</p>'; return; }
+
+        const getCaseTime = (c) => c.createdAt || c.scannerUploadedAt || c.lastStatusUpdate || (c.statusHistory && c.statusHistory[1]) || 0;
+        cases.sort((a, b) => { const d = getCaseTime(b) - getCaseTime(a); return d !== 0 ? d : (b.caseId || '').localeCompare(a.caseId || ''); });
+
+        const statusNames = {1: '📥 قائمة الانتظار', 2: '📦 وصول الطلب', 3: '🛵 وصول المندوب', 4: '🏭 المعمل', 5: '🏥 الشحن للعيادة'};
+        container.innerHTML = `
+            <div style="background:#1a1a2a; padding:10px; border-radius:16px; margin-bottom:15px; text-align:center;">
+                <span style="color:#ffb74d;">📚 كل الحالات المحفوظة (${cases.length} حالة)</span><br>
+                <span style="color:#ffb74d;">🔒 للقراءة فقط</span>
+            </div>
+            <div id="normalCasesList"></div>`;
+        const listDiv = container.querySelector('#normalCasesList');
+
+        cases.forEach(caseData => {
+            const caseDiv = document.createElement('div');
+            caseDiv.className = 'case-item' + (caseData.newNews ? ' new-news-glow' : '');
+            const progressPercentage = Math.max(0, Math.min(100, ((caseData.orderStatus - 1) / 4) * 100));
+            const { hasZircon, hasPorcelain } = getTreatmentTypeFromCase(caseData.toothTreatments || {});
+            let treatmentBadge = '';
+            if (hasZircon && hasPorcelain) treatmentBadge = '<span style="background:#c2185b; color:white; padding:2px 8px; border-radius:12px; font-size:11px; margin-right:5px;">✨ زيركون</span><span style="background:#2e7d32; color:white; padding:2px 8px; border-radius:12px; font-size:11px;">🏺 بورسلين</span>';
+            else if (hasZircon) treatmentBadge = '<span style="background:#c2185b; color:white; padding:2px 8px; border-radius:12px; font-size:11px;">✨ زيركونيوم</span>';
+            else if (hasPorcelain) treatmentBadge = '<span style="background:#2e7d32; color:white; padding:2px 8px; border-radius:12px; font-size:11px;">🏺 بورسلين</span>';
+            const newsBadge = caseData.newNews ? '<span class="new-news-badge">رسالة جديدة من الإدارة</span>' : '';
+            const pay = buildPaymentBadge(caseData);
+            caseDiv.innerHTML = `${newsBadge}
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                    <div style="flex:2;">
+                        <p><strong>👤 المريض:</strong> ${escapeHtml(caseData.patientName)}</p>
+                        <p><strong>🔐 الرقم التأكيدي:</strong> <span style="font-family:monospace; font-size:16px; color:#ffd700;">${escapeHtml(caseData.randomCode || 'غير متوفر')}</span></p>
+                        <p><strong>📅 التاريخ:</strong> ${escapeHtml(caseData._datePath || '')}</p>
+                        <p><strong>📊 الحالة:</strong> ${statusNames[caseData.orderStatus] || 'جديد'}</p>
+                        <p><strong>💳 الدفع:</strong> ${pay.badge}</p>
+                        ${pay.line}
+                        <p>${treatmentBadge}</p>
+                        ${caseData.scannerFile ? `<p><strong>📎 ملف:</strong> ${escapeHtml(caseData.scannerFile)}</p>` : ''}
+                    </div>
+                    <div style="flex:1; min-width:120px;">
+                        <div style="background:#2a2a38; border-radius:20px; overflow:hidden; height:8px;">
+                            <div style="width:${progressPercentage}%; height:100%; background:linear-gradient(90deg,#4caf50,#ffd700,#ff9800,#ff5722); border-radius:20px 0 0 20px;"></div>
+                        </div>
+                        <p style="text-align:center; margin-top:5px; font-size:11px;">${Math.round(progressPercentage)}%</p>
+                    </div>
+                </div>
+                <div style="display:flex; gap:8px; margin-top:12px;">
+                    <button class="view-case-btn" style="background:#2e7d32; border:none; color:white; padding:6px 12px; border-radius:20px; cursor:pointer;">🔍 عرض التفاصيل</button>
+                    <button class="load-case-btn" style="background:#ff8f00; border:none; color:white; padding:6px 12px; border-radius:20px; cursor:pointer;">📂 تحميل للواجهة</button>
+                </div>`;
+            listDiv.appendChild(caseDiv);
+            caseDiv.querySelector('.view-case-btn').addEventListener('click', (e) => { e.stopPropagation(); showCaseDetails(caseData); });
+            caseDiv.querySelector('.load-case-btn').addEventListener('click', (e) => { e.stopPropagation(); loadCaseToDashboard(caseData); closeOverlayAnimated(overlay); });
+        });
+    } catch (e) {
+        console.error('loadNormalTab error:', e);
+        container.innerHTML = '<p style="color:#f44336; text-align:center; padding:20px;">❌ خطأ في تحميل السجل</p>';
+    }
+}
+
+// تبويب قائمة الانتظار
+async function loadWaitingTab(container, doctorKey, overlay, card) {
+    try {
+        const [wSnap, pSnap] = await Promise.all([
+            database.ref(`dental lap/users/doctors/data/${doctorKey}/waiting`).once('value'),
+            database.ref(`dental lap/case data/pool/${doctorKey}`).once('value'),
+        ]);
+        const waitingPtrs    = wSnap.val() || {};
+        const dispatchedRefs = pSnap.val() || {};
+
+        const waitingItems = await Promise.all(Object.values(waitingPtrs).map(async p => {
+            try {
+                const path = `dental lap/case data/waiting/${p.year}/${p.month}/${p.day}/${doctorKey}/${p.caseId}`;
+                const snap = await database.ref(path).once('value');
+                const data = snap.val();
+                if (!data) return null;
+                return Object.assign({}, data, { _year: p.year, _month: p.month, _day: p.day });
+            } catch (e) { return null; }
+        }));
+        const waiting = waitingItems.filter(x => x);
+        waiting.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+        const dispatched = Object.values(dispatchedRefs).sort((a, b) => (b.dispatchedAt || 0) - (a.dispatchedAt || 0));
+
+        const totalWaiting = waiting.length;
+        const sumWaiting   = waiting.reduce((s, c) => s + (Number(c.total) || 0), 0);
+
+        // تحديث شارة التبويب
+        const tabCount = card.querySelector('#tabWaitingCount');
+        if (tabCount && totalWaiting > 0) { tabCount.textContent = totalWaiting; tabCount.style.display = 'inline-block'; }
+
+        container.innerHTML = `
+          <p style="text-align:center; color:#bbb; margin-bottom:12px;">
+            المنتظرة: <strong style="color:#ffd700;">${totalWaiting}</strong> حالة •
+            إجمالي: <strong style="color:#4caf50;">${sumWaiting.toLocaleString('en-US')} ج.م</strong>
+          </p>
+          <div style="text-align:center; margin-bottom:16px;">
+            <button id="poolDispatchBtn" class="primary-btn" style="background:linear-gradient(135deg,#2e7d32,#1b5e20); padding:12px 28px; font-size:16px; border-radius:14px;" ${totalWaiting === 0 ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : ''}>🛵 طلب مندوب (${totalWaiting} حالة)</button>
+          </div>
+          <h4 style="color:#ffd700; border-bottom:1px solid #444; padding-bottom:6px;">⏳ منتظرة الإرسال (قابلة للتعديل/الحذف)</h4>
+          <div id="poolWaitingList" style="margin:10px 0 22px;"></div>
+          <h4 style="color:#81c784; border-bottom:1px solid #444; padding-bottom:6px;">🚚 تم إرسالها (للقراءة فقط)</h4>
+          <div id="poolDispatchedList" style="margin:10px 0;"></div>
+        `;
+
+        // قائمة المنتظرة
+        const wList = container.querySelector('#poolWaitingList');
+        if (waiting.length === 0) {
+            wList.innerHTML = '<p style="color:#888; text-align:center; padding:14px;">📭 لا توجد حالات في قائمة الانتظار</p>';
+        } else {
+            waiting.forEach(c => {
+                const row = document.createElement('div');
+                row.className = 'case-item';
+                row.style.cssText = 'padding:12px; margin-bottom:10px; background:#2a2a38; border-radius:12px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;';
+                row.innerHTML = `
+                  <div style="flex:1; min-width:200px;">
+                    <strong style="color:#fff;">👤 ${escapeHtml(c.patientName || '')}</strong>
+                    <span style="color:#aaa; margin-right:10px;">🆔 ${escapeHtml(c.caseId || '')}</span>
+                    <br><small style="color:#888;">📅 ${c._year}/${c._month}/${c._day} • 💰 ${(Number(c.total) || 0).toLocaleString('en-US')} ج.م</small>
+                  </div>
+                  <div style="display:flex; gap:8px;">
+                    <button class="poolEditBtn" style="background:#1976d2; color:white; border:none; padding:8px 14px; border-radius:10px; cursor:pointer;">✏️ تعديل</button>
+                    <button class="poolDelBtn" style="background:#c62828; color:white; border:none; padding:8px 14px; border-radius:10px; cursor:pointer;">🗑 حذف</button>
+                  </div>`;
+                row.querySelector('.poolEditBtn').addEventListener('click', () => { loadCaseForPoolEdit(c); closeOverlayAnimated(overlay); });
+                row.querySelector('.poolDelBtn').addEventListener('click', async () => {
+                    if (!confirm(`هل أنت متأكد من حذف الحالة "${c.patientName}" (${c.caseId})؟`)) return;
+                    await deleteWaitingCase(c.caseId, c._year, c._month, c._day, doctorKey);
+                    closeOverlayAnimated(overlay);
+                    showTabbedRecords();
+                });
+                wList.appendChild(row);
+            });
+        }
+
+        // قائمة المرسلة
+        const dList = container.querySelector('#poolDispatchedList');
+        if (dispatched.length === 0) {
+            dList.innerHTML = '<p style="color:#888; text-align:center; padding:14px;">لا يوجد سجل إرسال سابق</p>';
+        } else {
+            dispatched.forEach(r => {
+                const dt = r.dispatchedAt ? new Date(r.dispatchedAt).toLocaleString('ar-EG') : '';
+                const row = document.createElement('div');
+                row.style.cssText = 'padding:10px 12px; margin-bottom:8px; background:#1f2630; border-radius:10px; border-right:3px solid #4caf50;';
+                row.innerHTML = `
+                  <strong style="color:#fff;">👤 ${escapeHtml(r.patientName || '')}</strong>
+                  <span style="color:#aaa; margin-right:10px;">🆔 ${escapeHtml(r.caseId || '')}</span>
+                  <br><small style="color:#888;">📅 ${r.year}/${r.month}/${r.day} • 💰 ${(Number(r.total) || 0).toLocaleString('en-US')} ج.م • 🛵 ${dt}</small>`;
+                dList.appendChild(row);
+            });
+        }
+
+        // زر طلب مندوب
+        const dispatchBtn = container.querySelector('#poolDispatchBtn');
+        if (totalWaiting > 0) {
+            dispatchBtn.addEventListener('click', async () => {
+                if (!confirm(`🛵 سيتم طلب مندوب لعدد ${totalWaiting} حالة وإرسالها للمسار الطبيعي.\n\nبعد الإرسال لن تكون قابلة للتعديل. هل تريد المتابعة؟`)) return;
+                dispatchBtn.disabled = true;
+                dispatchBtn.textContent = '⏳ جاري الإرسال...';
+                const result = await dispatchAllWaitingCases();
+                alert(`✅ تم إرسال ${result.success} حالة بنجاح${result.failed > 0 ? `\n❌ فشل ${result.failed} حالة` : ''}`);
+                updateWaitingBadge();
+                closeOverlayAnimated(overlay);
+                showTabbedRecords();
+            });
+        }
+    } catch (e) {
+        console.error('loadWaitingTab error:', e);
+        container.innerHTML = '<p style="color:#f44336; text-align:center; padding:20px;">❌ خطأ في تحميل قائمة الانتظار</p>';
+    }
+}
+
+// حذف حالة من قائمة الانتظار (waiting + المؤشّر المسطّح)
+async function deleteWaitingCase(caseId, year, month, day, doctorKey) {
+    try {
+        const updates = {};
+
+        updates[`dental lap/case data/waiting/${year}/${month}/${day}/${doctorKey}/${caseId}`] = null;
+        updates[`dental lap/users/doctors/data/${doctorKey}/waiting/${caseId}`] = null;
+        await database.ref().update(updates);
+        updateWaitingBadge();
+    } catch (e) {
+        console.error('فشل حذف الحالة:', e);
+        alert('❌ فشل حذف الحالة: ' + e.message);
+    }
+}
+
+// تحميل حالة من قائمة الانتظار إلى الواجهة في وضع التعديل
+function loadCaseForPoolEdit(caseData) {
+    loadCaseToDashboard(caseData);
+    setReadOnlyMode(false);
+    currentEditingPoolCase = {
+        year:   caseData._year,
+        month:  caseData._month,
+        day:    caseData._day,
+        caseId: caseData.caseId,
+    };
+    currentCasePath = `dental lap/case data/waiting/${caseData._year}/${caseData._month}/${caseData._day}/${getDoctorKey()}/${caseData.caseId}`;
+}
+
+// إرسال كل حالات قائمة الانتظار: نقل من waiting → المسار الطبيعي + كل الكتابات الجانبية
+async function dispatchAllWaitingCases() {
+    const doctorKey = getDoctorKey();
+    const ptrSnap = await database.ref(`dental lap/users/doctors/data/${doctorKey}/waiting`).once('value');
+    const pointers = ptrSnap.val() || {};
+    const ids = Object.keys(pointers);
+    const now = Date.now();
+    let success = 0, failed = 0;
+
+    // نجلب بيانات العيادة مرة واحدة
+    let clinicData = null;
+    try { clinicData = await getClinicData(currentClinicName); } catch (e) { console.error(e); }
+
+    for (const cid of ids) {
+        const p = pointers[cid];
+        try {
+            const waitingPath = `dental lap/case data/waiting/${p.year}/${p.month}/${p.day}/${doctorKey}/${cid}`;
+            const snap = await database.ref(waitingPath).once('value');
+            const data = snap.val();
+            if (!data) { failed++; continue; }
+
+            // تحديث الحالة: تخطّت مرحلة الـpool وأصبحت "وصول الطلب للمعمل"
+            const sh = data.statusHistory || {};
+            sh["الإضافة لقائمة الانتظار"] = true;
+            sh["استلام الطلب"]          = true;
+            // لو معاها سكان: نتخطّى المندوب ونعتبر الحالة وصلت للمعمل مباشرة
+            if (data.scannerFile) {
+                sh["ارسال مندوب للعياده"] = true;
+                sh["استلام الحاله"]       = true;
+            }
+            data.statusHistory = sh;
+            data.orderStatus   = data.scannerFile ? 4 : 2;
+            data.dispatchedAt  = now;
+            data.isReadOnly    = true;
+
+            // استخدام التاريخ الأصلي لمسار النقل
+            const datePath = { year: p.year, month: p.month, day: p.day, fullPath: `${p.year}/${p.month}/${p.day}` };
+            const normalPath = `dental lap/case data/${datePath.fullPath}/${doctorKey}/${cid}`;
+
+            // 1. كتابة المسار الرئيسي
+            await database.ref(normalPath).set(data);
+
+            // 2. الكتابات الجانبية (تأخّرت من وقت الحفظ الأول لما الحالة كانت في pool)
+            try { if (data.randomCode) await saveToSecretCodeIndex(data.randomCode, cid, data.patientName, datePath, doctorKey); } catch (e) { console.error('secret index:', e); }
+            try { if (clinicData) await saveOrderToWorkersPath(data, cid, clinicData, data.randomCode); } catch (e) { console.error('workers:', e); }
+            try { await saveOrderToCareerLadder(data, cid); } catch (e) { console.error('career:', e); }
+            try {
+                const cats = collectCaseCategories(data.toothTreatments || {});
+                const ptr  = { year: p.year, month: p.month, day: p.day, doctorName: doctorKey };
+                const updates = {};
+                cats.forEach(catKey => { updates[`dental lap/case data/case type/${catKey}/${cid}`] = ptr; });
+                if (Object.keys(updates).length) await database.ref().update(updates);
+            } catch (e) { console.error('case type:', e); }
+            try { await saveCaseInvoice(data, cid); } catch (e) { console.error('invoice:', e); }
+
+            // 3. مؤشر مسطّح لمسار العادي تحت الطبيب
+            await database.ref(`dental lap/users/doctors/data/${doctorKey}/cases/${cid}`).set({
+                year: p.year, month: p.month, day: p.day, doctorName: doctorKey, caseId: cid, patientName: data.patientName,
+            });
+
+            // 4. مرجع في مجلد "قائمة الانتظار" (للعرض فقط لاحقاً)
+            await database.ref(`dental lap/case data/pool/${doctorKey}/${cid}`).set({
+                caseId: cid, patientName: data.patientName,
+                year: p.year, month: p.month, day: p.day,
+                dispatchedAt: now, total: data.total || 0,
+            });
+
+            // 5. حذف من waiting + المؤشّر المسطّح للـwaiting
+            const cleanup = {};
+            cleanup[waitingPath] = null;
+            cleanup[`dental lap/users/doctors/data/${doctorKey}/waiting/${cid}`] = null;
+            await database.ref().update(cleanup);
+
+            success++;
+        } catch (err) {
+            console.error('فشل إرسال حالة:', cid, err);
+            failed++;
+        }
+    }
+    return { success, failed };
+}
+
+// ============================================================================
+// 🔔 نظام الإشعارات الفورية (Real-time Listeners)
+// ============================================================================
+
+// إشعار منبثق فوري (toast)
+function showNotifToast(message, duration = 5000) {
+    const existing = document.querySelector('.notif-toast');
+    if (existing) existing.remove();
+    const toast = document.createElement('div');
+    toast.className = 'notif-toast';
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    toast.addEventListener('click', () => {
+        toast.remove();
+        const overlay = document.getElementById('aiChatOverlay');
+        if (overlay && overlay.style.display !== 'none') return;
+        if (currentCaseId) showAiChat();
+    });
+    setTimeout(() => { if (toast.parentNode) toast.remove(); }, duration);
+}
+
+// تشغيل حالة "تنبيه" على زر المحادثة
+function setAiButtonNotif(on) {
+    const btn = document.getElementById('aiChatBtn');
+    if (!btn) return;
+    if (on) btn.classList.add('has-notif');
+    else    btn.classList.remove('has-notif');
+}
+
+// ربط listener في الوقت الحقيقي على مسار الحالة المحمّلة
+function attachCaseListener() {
+    detachCaseListener();
+    const path = currentCasePath;
+    if (!path) return;
+    _caseListenerPath = path;
+    _caseListener = database.ref(path).on('value', snap => {
+        const data = snap.val();
+        if (!data) return;
+
+        // 1) تحديث البروجريس بار فوراً لو الحالة تغيّرت من الإدارة
+        if (data.orderStatus && data.orderStatus !== currentOrderStatus) {
+            currentOrderStatus = data.orderStatus;
+            applyStatusFromHistory(data.statusHistory);
+            updateStepDates(data.statusHistory);
+        }
+
+        // 2) تحقق من رسائل جديدة في المحادثة (رسالة إدارة)
+        let convo = data.conversation || [];
+        if (convo && !Array.isArray(convo)) {
+            convo = Object.keys(convo).sort((a,b) => Number(a)-Number(b)).map(k => convo[k]);
+        }
+        if (convo.length > _lastConversationLength) {
+            const newMsgs = convo.slice(_lastConversationLength);
+            const adminMsgs = newMsgs.filter(m => m.role === 'admin');
+            if (adminMsgs.length > 0) {
+                adminMsgs.forEach(m => addAiMessage('admin', m.content));
+                currentConversation = convo;
+                _lastConversationLength = convo.length;
+                showNotifToast('🔴 رسالة جديدة من الإدارة: ' + adminMsgs[adminMsgs.length - 1].content);
+                setAiButtonNotif(true);
+                // تعيين newNews = true في فايربيز
+                if (currentCasePath) {
+                    database.ref(currentCasePath + '/newNews').set(true).catch(() => {});
+                }
+                const recBtn = document.getElementById('recordBtnDashboard');
+                if (recBtn) { recBtn.style.boxShadow = '0 0 12px 4px rgba(244,67,54,0.5)'; setTimeout(() => recBtn.style.boxShadow = '', 4000); }
+            } else {
+                // رسائل عادية (bot) أضافها نظام آخر — نحدّث المحادثة فقط
+                currentConversation = convo;
+                _lastConversationLength = convo.length;
+            }
+        }
+
+        // 3) تحديث الفاتورة الإجمالية لو تغيّرت
+        if (data.total !== undefined) {
+            loadDoctorInvoice(true);
+        }
+    });
+}
+
+// فصل الـ listener عند ريست أو تحميل حالة أخرى
+function detachCaseListener() {
+    if (_caseListener && _caseListenerPath) {
+        database.ref(_caseListenerPath).off('value', _caseListener);
+    }
+    _caseListener = null;
+    _caseListenerPath = null;
+    setAiButtonNotif(false);
+}
