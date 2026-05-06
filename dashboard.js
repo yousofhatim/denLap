@@ -38,6 +38,9 @@ let _caseListener = null;
 let _caseListenerPath = null;
 let _lastConversationLength = 0;
 
+// Missing slots للسبيس مينتينر: { spaceMaintainerToothNumber: missingSlotToothNumber }
+let missingSlots = {};
+
 async function loadOpenAiApiKey() {
     if (openAiApiKey) return openAiApiKey;
     try {
@@ -350,66 +353,122 @@ const TREATMENT_TREE = {
     pfm: {
         key: 'pfm',
         label: 'P.F.M',
+        labelAr: 'بورسلين',
         color: '#1976d2',
         treatments: [
-            { key: 'pfm_porcelain_crown',         label: 'Porcelain Crown (P.F.M)',           price: 250, color: '#1976d2',
+            { key: 'pfm_porcelain_crown',         label: 'Porcelain Crown (P.F.M)',           labelAr: 'بورسلين كراون',                price: 250, color: '#1976d2',
                 followUp: { question: 'هل التحضيرة طويلة أم قصيرة؟', options: [
                     { key: 'long_prep',  label: 'تحضيرة طويلة' },
                     { key: 'short_prep', label: 'تحضيرة قصيرة' },
                 ]}},
-            { key: 'pfm_porcelain_crown_gum',     label: 'Porcelain Crown WITH GUM (P.F.M)',  price: 300, color: '#00acc1',
+            { key: 'pfm_porcelain_crown_gum',     label: 'Porcelain Crown WITH GUM (P.F.M)',  labelAr: 'بورسلين كراون باللثة',         price: 300, color: '#00acc1',
                 followUp: { question: 'الزرعات مفتوحة أم مقفولة؟', options: [
                     { key: 'open_implants',   label: 'زرعات مفتوحة' },
                     { key: 'closed_implants', label: 'زرعات مقفولة' },
                 ]}},
-            { key: 'pfm_repair',                  label: 'Repair Porcelain Crown',            price: 150, color: '#ffb300' },
-            { key: 'pfm_casted_metal_crown',      label: 'Casted Metal Crown',                price: 150, color: '#78909c' },
-            { key: 'pfm_casted_metal_post_core',  label: 'Casted Metal Post & Core',          price: 250, color: '#455a64' },
-            // البونتيك في P.F.M: السعر يأخذ ديناميكياً من السن الملاصق المتصل (الافتراضي = 250)
-            { key: 'pfm_pontic',                  label: 'Pontic (P.F.M)',                    price: 250, color: '#ec407a', isPontic: true },
+            { key: 'pfm_repair',                  label: 'Repair Porcelain Crown',            labelAr: 'إصلاح بورسلين كراون',          price: 150, color: '#ffb300' },
+            { key: 'pfm_casted_metal_crown',      label: 'Casted Metal Crown',                labelAr: 'كراون معدني مصبوب',            price: 150, color: '#78909c' },
+            { key: 'pfm_casted_metal_post_core',  label: 'Casted Metal Post & Core',          labelAr: 'بوست آند كور معدني',           price: 250, color: '#455a64' },
+            { key: 'pfm_pontic',                  label: 'Pontic (P.F.M)',                    labelAr: 'بونتيك (بورسلين)',              price: 250, color: '#ec407a', isPontic: true },
         ]
     },
     zirconium: {
         key: 'zirconium',
         label: 'Zirconium',
+        labelAr: 'زيركونيوم',
         color: '#c2185b',
         treatments: [
-            { key: 'zir_full_anatomy',     label: 'Full Anatomy Zirconium Crown (multi layers)', price: 700,  color: '#c2185b' },
-            { key: 'zir_full_anatomy_gum', label: 'Full Anatomy Zirconium Crown With gum',       price: 750,  color: '#f48fb1',
+            { key: 'zir_full_anatomy',     label: 'Full Anatomy Zirconium Crown (multi layers)', labelAr: 'زيركون كراون كامل (متعدد الطبقات)', price: 700,  color: '#c2185b' },
+            { key: 'zir_full_anatomy_gum', label: 'Full Anatomy Zirconium Crown With gum',       labelAr: 'زيركون كراون كامل باللثة',          price: 750,  color: '#f48fb1',
                 followUp: { question: 'الزرعات مفتوحة أم مقفولة؟', options: [
                     { key: 'open_implants',   label: 'زرعات مفتوحة' },
                     { key: 'closed_implants', label: 'زرعات مقفولة' },
                 ]}},
-            { key: 'zir_max',     label: 'Zirco Max Crown',         price: 800,  color: '#6a1b9a' },
-            { key: 'zir_french',  label: 'French Crown',            price: 900,  color: '#00897b' },
-            { key: 'zir_german',  label: 'GERMAN Crown',            price: 1100, color: '#d84315' },
-            { key: 'zir_emax',    label: 'E MAX Full Crown (press)',price: 1300, color: '#311b92' },
-            // البونتيك في Zirconium: السعر يأخذ ديناميكياً من السن الملاصق المتصل (الافتراضي = 700)
-            { key: 'zir_pontic',  label: 'Pontic (Zirconium)',      price: 700,  color: '#d81b60', isPontic: true },
-        ]
-    },
-    temporary: {
-        key: 'temporary',
-        label: 'Temporary',
-        color: '#f57c00',
-        treatments: [
-            { key: 'tmp_pmma',    label: 'temporary PMMA crown ( cad cam )', price: 100, color: '#fb8c00' },
-            { key: 'tmp_acrylic', label: 'temporary Acrylic Crown',          price: 100, color: '#6d4c41' },
-            { key: 'tmp_waxup',   label: 'Wax-up digital crown ( mock-up )', price: 50,  color: '#fdd835' },
+            { key: 'zir_max',     label: 'Zirco Max Crown',         labelAr: 'زيركو ماكس كراون',                  price: 800,  color: '#6a1b9a' },
+            { key: 'zir_french',  label: 'French Crown',            labelAr: 'كراون فرنساوي',                     price: 900,  color: '#00897b' },
+            { key: 'zir_german',  label: 'GERMAN Crown',            labelAr: 'كراون ألماني',                      price: 1100, color: '#d84315' },
+            { key: 'zir_emax',    label: 'E MAX Full Crown (press)',labelAr: 'إي ماكس كراون كامل (بريس)',        price: 1300, color: '#311b92' },
+            { key: 'zir_pmma',    label: 'PMMA Crown ( cad cam )',  labelAr: 'PMMA كراون (كاد كام)',              price: 100,  color: '#fb8c00' },
+            { key: 'zir_waxup',   label: 'Wax-up digital crown ( mock-up )', labelAr: 'واكس-أب كراون ديجيتال (موك-أب)', price: 50, color: '#fdd835' },
+            { key: 'zir_pontic',  label: 'Pontic (Zirconium)',      labelAr: 'بونتيك (زيركون)',                   price: 700,  color: '#d81b60', isPontic: true },
         ]
     },
     ortho: {
         key: 'ortho',
         label: 'Ortho/Acrylic',
+        labelAr: 'أورثو / أكريل',
         color: '#2e7d32',
         treatments: [
-            { key: 'ortho_space_band',   label: 'Space maintainer & band',         price: 350,  color: '#43a047' },
-            { key: 'ortho_space_crown',  label: 'Space maintainer & crown',        price: 450,  color: '#00695c' },
-            { key: 'ortho_night_guard',  label: 'Night guard hard & soft u or l',  price: 250,  color: '#9e9d24' },
-            { key: 'ortho_vitalium',     label: 'VITALIUM WITH OUT ACRYLIC',       price: 1700, color: '#5d4037' },
+            { key: 'ortho_acrylic_crown',     label: 'Acrylic Crown',                          labelAr: 'أكريليك كراون',                              price: 100,  color: '#6d4c41' },
+            { key: 'ortho_space_band',        label: 'Space maintainer & band',                labelAr: 'سبيس مينتينر آند باند',                       price: 350,  color: '#43a047', requiresMissingSlot: true },
+            { key: 'ortho_space_crown',       label: 'Space maintainer & crown',               labelAr: 'سبيس مينتينر آند كراون',                      price: 450,  color: '#00695c', requiresMissingSlot: true },
+            { key: 'ortho_night_guard',       label: 'Night guard hard & soft u or l',         labelAr: 'نايت جارد هارد آند سوفت (علوي/سفلي)',          price: 250,  color: '#9e9d24', singlePrice: true },
+            { key: 'ortho_vitalium',          label: 'VITALIUM WITH OUT ACRYLIC',              labelAr: 'فيتاليوم بدون أكريل',                         price: 1700, color: '#5d4037' },
+            { key: 'ortho_flex_complete',     label: 'Flexible Complete Denture',              labelAr: 'فلكس طقم كامل',                              price: 2300, color: '#1565c0', singlePrice: true },
+            { key: 'ortho_flex_partial',      label: 'Flexible Partial Denture',               labelAr: 'فلكس طقم جزئي',                              price: 300,  color: '#0277bd', dynamicPartial: 'flex' },
+            { key: 'ortho_flex_relining',     label: 'Flexible Re-Lining & Re-Basing (U or L)',labelAr: 'فلكس ري-لاينينغ آند ري-بيسنغ (علوي/سفلي)',  price: 800,  color: '#01579b', singlePrice: true },
+            { key: 'ortho_acrylic_complete',  label: 'Acrylic Complete Denture',               labelAr: 'أكريل طقم كامل',                             price: 1500, color: '#4e342e', singlePrice: true },
+            { key: 'ortho_acrylic_partial',   label: 'Acrylic Partial Denture',                labelAr: 'أكريل طقم جزئي',                             price: 150,  color: '#5d4037' },
+            { key: 'ortho_acrylic_repair',    label: 'Acrylic Repair',                         labelAr: 'إصلاح أكريل',                                price: 150,  color: '#795548' },
+            { key: 'ortho_rubber_relining',   label: 'Rubber Re-Lining & Re-Basing (U or L)',  labelAr: 'ربر ري-لاينينغ آند ري-بيسنغ (علوي/سفلي)',   price: 800,  color: '#6d4c41', singlePrice: true },
+            { key: 'ortho_acrylic_relining',  label: 'Acrylic Re-Lining & Re-Basing (U or L)', labelAr: 'أكريل ري-لاينينغ آند ري-بيسنغ (علوي/سفلي)', price: 450,  color: '#8d6e63', singlePrice: true },
         ]
     }
 };
+
+// لغة عرض أسماء العلاجات: 'ar' أو 'en'
+let currentTreatmentLang = (typeof localStorage !== 'undefined' && localStorage.getItem('treatmentLang')) || 'ar';
+function pickLabel(obj) {
+    if (!obj) return '';
+    if (currentTreatmentLang === 'ar') return obj.labelAr || obj.label || '';
+    return obj.label || obj.labelAr || '';
+}
+function setTreatmentLang(lang) {
+    currentTreatmentLang = (lang === 'en') ? 'en' : 'ar';
+    try { localStorage.setItem('treatmentLang', currentTreatmentLang); } catch(e) {}
+    // إعادة رسم لوحة العلاج وملخّص العلاجات
+    rerenderTreatmentPanel();
+    updateTreatmentsSummary();
+}
+
+// تتبّع شاشة لوحة العلاج الحالية لإعادة الرسم بعد تبديل اللغة
+let _panelView = { type: 'main' };
+function rerenderTreatmentPanel() {
+    if (!_panelView) return;
+    if (_panelView.type === 'main')      buildMainCategoriesUI();
+    else if (_panelView.type === 'sub')  buildSubTreatmentsUI(_panelView.catKey);
+    else if (_panelView.type === 'follow') {
+        const cat = TREATMENT_TREE[_panelView.catKey];
+        const tr  = cat && cat.treatments.find(t => t.key === _panelView.treatmentKey);
+        if (tr) buildFollowUpUI(_panelView.catKey, tr);
+    } else if (_panelView.type === 'locked' && _panelView.tooth && toothTreatments[_panelView.tooth]) {
+        lockTreatmentPanel(_panelView.tooth, toothTreatments[_panelView.tooth]);
+    }
+}
+
+// زر تبديل اللغة (يُضاف في أعلى لوحة العلاج)
+function buildLangToggleButton() {
+    const btn = document.createElement('button');
+    btn.className = 'tp-lang-toggle';
+    btn.type = 'button';
+    btn.textContent = currentTreatmentLang === 'ar' ? '🌐 عربي / EN' : '🌐 EN / عربي';
+    btn.title = 'تبديل لغة أسماء العلاجات';
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setTreatmentLang(currentTreatmentLang === 'ar' ? 'en' : 'ar');
+    });
+    return btn;
+}
+
+// أسعار Flexible Partial Denture حسب عدد الأسنان: 1=300, 2=600, 3=800, 4=1000, 5+=1150
+function getFlexPartialTotal(count) {
+    if (count <= 0) return 0;
+    if (count === 1) return 300;
+    if (count === 2) return 600;
+    if (count === 3) return 800;
+    if (count === 4) return 1000;
+    return 1150;
+}
 
 let treatmentPanelState = 'empty';
 let isDragging = false;
@@ -422,17 +481,26 @@ let _dragEndedRecently = false;
 
 // إيجاد بيانات العلاج من المفتاح (مع دعم البيانات القديمة المحفوظة كنص)
 function getTreatmentData(treatment) {
-    // الصيغة الجديدة: كائن يحوي كل البيانات
-    if (treatment && typeof treatment === 'object') return treatment;
+    // الصيغة الجديدة: كائن يحوي كل البيانات — أكمل labelAr من الشجرة لو ناقص (بيانات قديمة)
+    if (treatment && typeof treatment === 'object') {
+        if (treatment.key && (!treatment.labelAr || !treatment.categoryLabelAr)) {
+            for (const catKey of Object.keys(TREATMENT_TREE)) {
+                const cat = TREATMENT_TREE[catKey];
+                const tt = cat.treatments.find(x => x.key === treatment.key);
+                if (tt) return { ...treatment, labelAr: treatment.labelAr || tt.labelAr || treatment.label, categoryLabelAr: treatment.categoryLabelAr || cat.labelAr || cat.label };
+            }
+        }
+        return treatment;
+    }
     const key = treatment;
     for (const catKey of Object.keys(TREATMENT_TREE)) {
         const cat = TREATMENT_TREE[catKey];
         for (const t of cat.treatments) {
-            if (t.key === key) return { ...t, category: catKey, categoryLabel: cat.label };
+            if (t.key === key) return { ...t, category: catKey, categoryLabel: cat.label, categoryLabelAr: cat.labelAr || cat.label };
         }
     }
     const legacy = { zircon: '#c2185b', porcelain: '#2e7d32', pontic: '#c62828', healthy: '#ff8f00' };
-    return { key, label: key, color: legacy[key] || '#546e7a', price: 0 };
+    return { key, label: key, labelAr: key, color: legacy[key] || '#546e7a', price: 0 };
 }
 
 function showTreatmentPanel(toothNumber) {
@@ -455,10 +523,11 @@ function lockTreatmentPanel(toothNumber, treatmentObj) {
         ? `<div style="color:#9aa0b4; font-size:0.72rem; margin-top:4px; font-style:italic;">السعر: حسب السن المتصل بالكونكتور</div>`
         : (td.price ? `<div style="color:#90caf9; font-size:0.72rem; margin-top:4px;">السعر: ${td.price} ج</div>` : '');
     info.innerHTML = `
-        <div style="background:${td.color}; padding:10px 16px; border-radius:20px; color:white; font-weight:bold; text-align:center; font-size:0.78rem;">${td.label}</div>
+        <div style="background:${td.color}; padding:10px 16px; border-radius:20px; color:white; font-weight:bold; text-align:center; font-size:0.78rem;">${pickLabel(td)}</div>
         ${subTxt}${priceTxt}
         <div style="color:#b0bec5; font-size:0.78rem; text-align:center; margin-top:6px;">السن رقم ${toothNumber}</div>`;
     treatmentPanelState = 'locked';
+    _panelView = { type: 'locked', tooth: toothNumber };
 }
 
 function resetTreatmentPanel() {
@@ -473,6 +542,10 @@ function buildMainCategoriesUI() {
     const list = document.getElementById('tpCategoriesList');
     if (!list) return;
     list.innerHTML = '';
+    _panelView = { type: 'main' };
+
+    // زر تبديل اللغة في الأعلى
+    list.appendChild(buildLangToggleButton());
 
     // الفروع المستخدمة في الحالة الآن (للحفاظ على فرع رئيسي واحد فقط)
     const usedCats = collectCaseCategories(toothTreatments);
@@ -483,7 +556,7 @@ function buildMainCategoriesUI() {
         note.className = 'tp-followup-q';
         note.style.color = '#a5d6a7';
         note.style.background = 'rgba(76,175,80,0.1)';
-        note.textContent = `🔒 فرع الحالة: ${TREATMENT_TREE[lockedCat]?.label || lockedCat} — لا يمكن خلطه بفرع آخر`;
+        note.textContent = `🔒 فرع الحالة: ${pickLabel(TREATMENT_TREE[lockedCat]) || lockedCat} — لا يمكن خلطه بفرع آخر`;
         list.appendChild(note);
     }
 
@@ -494,13 +567,13 @@ function buildMainCategoriesUI() {
         const btn = document.createElement('button');
         btn.className = 'tp-main-btn';
         btn.style.background = cat.color;
-        btn.textContent = cat.label;
+        btn.textContent = pickLabel(cat);
         const isDisabled = lockedCat && lockedCat !== catKey;
         if (isDisabled) btn.classList.add('disabled-cat');
         btn.addEventListener('click', () => {
             if (isReadOnly) return;
             if (isDisabled) {
-                alert(`🔒 الحالة بدأت بفرع: ${TREATMENT_TREE[lockedCat].label}\nلا يمكن إضافة علاجات من فرع آخر.`);
+                alert(`🔒 الحالة بدأت بفرع: ${pickLabel(TREATMENT_TREE[lockedCat])}\nلا يمكن إضافة علاجات من فرع آخر.`);
                 return;
             }
             buildSubTreatmentsUI(catKey);
@@ -516,6 +589,10 @@ function buildSubTreatmentsUI(catKey) {
     const list = document.getElementById('tpCategoriesList');
     if (!list || !cat) return;
     list.innerHTML = '';
+    _panelView = { type: 'sub', catKey };
+
+    // زر تبديل اللغة
+    list.appendChild(buildLangToggleButton());
 
     // زر رجوع للفئات الرئيسية
     const back = document.createElement('button');
@@ -527,7 +604,7 @@ function buildSubTreatmentsUI(catKey) {
     const header = document.createElement('div');
     header.className = 'tp-sub-header';
     header.style.background = cat.color;
-    header.textContent = cat.label;
+    header.textContent = pickLabel(cat);
     list.appendChild(header);
 
     const wrap = document.createElement('div');
@@ -537,7 +614,7 @@ function buildSubTreatmentsUI(catKey) {
         btn.className = 'tp-treatment-btn';
         btn.style.background = t.color;
         const priceLbl = t.isPontic ? 'حسب الكونكتور' : `${t.price} ج`;
-        btn.innerHTML = `<span class="ttb-label">${t.label}</span><span class="ttb-price">${priceLbl}</span>`;
+        btn.innerHTML = `<span class="ttb-label">${pickLabel(t)}</span><span class="ttb-price">${priceLbl}</span>`;
         btn.addEventListener('click', () => {
             if (isReadOnly || !selectedTooth) return;
             if (t.followUp) {
@@ -556,6 +633,9 @@ function buildFollowUpUI(catKey, treatment) {
     const list = document.getElementById('tpCategoriesList');
     if (!list) return;
     list.innerHTML = '';
+    _panelView = { type: 'follow', catKey, treatmentKey: treatment.key };
+
+    list.appendChild(buildLangToggleButton());
 
     const back = document.createElement('button');
     back.className = 'tp-back-btn';
@@ -566,7 +646,7 @@ function buildFollowUpUI(catKey, treatment) {
     const header = document.createElement('div');
     header.className = 'tp-sub-header';
     header.style.background = treatment.color;
-    header.textContent = treatment.label;
+    header.textContent = pickLabel(treatment);
     list.appendChild(header);
 
     const q = document.createElement('div');
@@ -609,18 +689,27 @@ function applyChosenTreatment(toothNumber, catKey, treatment, subOption) {
     const obj = {
         key:             treatment.key,
         label:           treatment.label,
+        labelAr:         treatment.labelAr || treatment.label,
         color:           treatment.color,
         price:           treatment.price,
         category:        catKey,
         categoryLabel:   cat.label,
+        categoryLabelAr: cat.labelAr || cat.label,
         subOption:       subOption ? subOption.key   : null,
         subOptionLabel:  subOption ? subOption.label : null,
         isPontic:        !!treatment.isPontic,
+        singlePrice:     !!treatment.singlePrice,
+        dynamicPartial:  treatment.dynamicPartial || null,
+        requiresMissingSlot: !!treatment.requiresMissingSlot,
     };
     applyTreatmentToTooth(toothNumber, obj);
     currentTreatment = obj;
     lockTreatmentPanel(toothNumber, obj);
     updateTreatmentsSummary();
+    // لو العلاج يحتاج اختيار مكان السن المفقود (سبيس مينتينر) — فعّل وضع اختيار السن المجاور
+    if (treatment.requiresMissingSlot) {
+        startMissingSlotPick(toothNumber);
+    }
 }
 
 function clearToothTreatment(toothNumber, btn) {
@@ -632,6 +721,21 @@ function clearToothTreatment(toothNumber, btn) {
         btn.removeAttribute('data-treatment');
     }
     delete toothTreatments[toothNumber];
+    // إزالة كل الكونكتورز المتصلة بهذا السن
+    Object.keys(toothConnections).forEach(key => {
+        const [a, b] = key.split('_').map(Number);
+        if (a === toothNumber || b === toothNumber) delete toothConnections[key];
+    });
+    // إعادة رسم النقاط (نمسح القديم ونرسم الجديد بالحالة الصحيحة)
+    document.querySelectorAll('.connection-dot').forEach(d => d.remove());
+    setTimeout(() => addConnectionDots(), 0);
+    // إزالة أي missing-slot لو هذا السن كان سبيس مينتينر
+    if (missingSlots[toothNumber]) {
+        const slotTooth = missingSlots[toothNumber];
+        delete missingSlots[toothNumber];
+        const slotBtn = Array.from(document.querySelectorAll('.tooth-button')).find(b => parseInt(b.innerText) === slotTooth);
+        if (slotBtn) slotBtn.classList.remove('missing-slot');
+    }
     updateSelectedCount();
     updateTreatmentsSummary();
     if (toothNumber === selectedTooth) {
@@ -1143,7 +1247,6 @@ function getMainCaseType() {
     if (cats.includes('zirconium'))  return 'zirconium';
     if (cats.includes('pfm'))        return 'pfm';
     if (cats.includes('ortho'))      return 'ortho';
-    if (cats.includes('temporary'))  return 'temporary';
     return 'other';
 }
 
@@ -1453,19 +1556,29 @@ function collectCaseCategories(toothTreatments) {
     return Array.from(set);
 }
 
-// إيجاد سعر فعّال للبونتيك من السن الملاصق المتصل (مثلاً emax بـ 1300 بدل 700)
+// إيجاد سعر فعّال للبونتيك من السن الملاصق المتصل
+// (BFS) لو البونتيك متصل بسن أساسي مباشرة — يأخذ سعره
+// لو البونتيك متصل ببونتيك آخر متصل بسن أساسي — يأخذ نفس السلسلة
 function getPonticEffectiveData(toothNumber, treatmentsMap, connections) {
     connections = connections || {};
-    for (const [a, b] of adjacentPairs) {
-        if (a !== toothNumber && b !== toothNumber) continue;
-        const pairKey = `${a}_${b}`;
-        if (!connections[pairKey]) continue;
-        const otherTooth = (a === toothNumber) ? b : a;
-        const neighbor = treatmentsMap[otherTooth];
-        if (!neighbor) continue;
-        const nd = getTreatmentData(neighbor);
-        if (!nd.isPontic && typeof nd.price === 'number' && nd.price > 0) {
-            return nd;
+    const visited = new Set([toothNumber]);
+    const queue = [toothNumber];
+    while (queue.length) {
+        const current = queue.shift();
+        for (const [a, b] of adjacentPairs) {
+            if (a !== current && b !== current) continue;
+            const pairKey = `${a}_${b}`;
+            if (!connections[pairKey]) continue;
+            const otherTooth = (a === current) ? b : a;
+            if (visited.has(otherTooth)) continue;
+            visited.add(otherTooth);
+            const neighbor = treatmentsMap[otherTooth];
+            if (!neighbor) continue;
+            const nd = getTreatmentData(neighbor);
+            if (!nd.isPontic && typeof nd.price === 'number' && nd.price > 0) {
+                return nd;
+            }
+            if (nd.isPontic) queue.push(otherTooth);
         }
     }
     return null;
@@ -1477,11 +1590,25 @@ function getPonticEffectivePrice(toothNumber, treatmentsMap, connections) {
 
 // حساب إجمالي سعر الحالة الحالية من toothTreatments
 // البونتيك يأخذ سعر السن الملاصق المتصل به (لو موجود)
+// العلاجات ذات singlePrice (نايت جارد، فليكس كومبليت...) تُحسب مرة واحدة بغض النظر عن عدد الأسنان
+// Flexible Partial Denture: السعر حسب عدد الأسنان (1=300, 2=600, 3=800, 4=1000, 5+=1150)
 function calcCaseTotalPrice(treatmentsMap, connections) {
     connections = connections || toothConnections || {};
     let total = 0;
+    const seenSingleKeys = new Set();
+    const partialCounts = {};
     for (const [tooth, t] of Object.entries(treatmentsMap || {})) {
         const td = getTreatmentData(t);
+        if (td.dynamicPartial) {
+            partialCounts[td.dynamicPartial] = (partialCounts[td.dynamicPartial] || 0) + 1;
+            continue;
+        }
+        if (td.singlePrice) {
+            if (seenSingleKeys.has(td.key)) continue;
+            seenSingleKeys.add(td.key);
+            total += (typeof td.price === 'number') ? td.price : 0;
+            continue;
+        }
         let price = (typeof td.price === 'number') ? td.price : 0;
         if (td.isPontic) {
             const adopted = getPonticEffectivePrice(parseInt(tooth), treatmentsMap, connections);
@@ -1489,6 +1616,9 @@ function calcCaseTotalPrice(treatmentsMap, connections) {
         }
         total += price;
     }
+    Object.entries(partialCounts).forEach(([type, count]) => {
+        if (type === 'flex') total += getFlexPartialTotal(count);
+    });
     return total;
 }
 
@@ -1501,11 +1631,32 @@ async function saveCaseInvoice(caseData, caseId) {
 
     const items = [];
     const connections = caseData.toothConnections || {};
-    Object.entries(caseData.toothTreatments || {}).forEach(([tooth, t]) => {
+    const treatmentsMap = caseData.toothTreatments || {};
+    const seenSingleKeysInv = new Set();
+    const partialCountsInv = {};
+    // مرور أول لحساب أعداد الأنواع الديناميكية
+    Object.values(treatmentsMap).forEach(t => {
+        const td = getTreatmentData(t);
+        if (td.dynamicPartial) partialCountsInv[td.dynamicPartial] = (partialCountsInv[td.dynamicPartial] || 0) + 1;
+    });
+    Object.entries(treatmentsMap).forEach(([tooth, t]) => {
         const td = getTreatmentData(t);
         let price = td.price || 0;
-        if (td.isPontic) {
-            const adopted = getPonticEffectivePrice(parseInt(tooth), caseData.toothTreatments || {}, connections);
+        if (td.singlePrice) {
+            if (seenSingleKeysInv.has(td.key)) price = 0;
+            else { seenSingleKeysInv.add(td.key); price = td.price || 0; }
+        } else if (td.dynamicPartial) {
+            // وزّع الإجمالي على أول سن فقط؛ الباقي صفر (يبقى الإجمالي صحيحاً)
+            const type = td.dynamicPartial;
+            const total = (type === 'flex') ? getFlexPartialTotal(partialCountsInv[type] || 0) : 0;
+            if (!seenSingleKeysInv.has('__partial_' + type)) {
+                seenSingleKeysInv.add('__partial_' + type);
+                price = total;
+            } else {
+                price = 0;
+            }
+        } else if (td.isPontic) {
+            const adopted = getPonticEffectivePrice(parseInt(tooth), treatmentsMap, connections);
             if (adopted !== null) price = adopted;
         }
         items.push({
@@ -1590,19 +1741,51 @@ function updateTreatmentsSummary() {
     //  • البونتيك غير المتصل → مجموعة مستقلة "بونتيك" (رمادي) + سعر = "حسب الكونكتور"
     const grouped = {}; // catKey -> { label, color, items: [{tooth, displayLabel, color, effectivePrice, isOrphanPontic}] }
     let totalPrice = 0;
+    const seenSingleKeys = new Set();
+    const partialEntries = {}; // type -> { catKey, color, label, items: [{tooth, color}] }
+
     Object.entries(toothTreatments).forEach(([tooth, treatment]) => {
         const t = getTreatmentData(treatment);
         const toothNum = parseInt(tooth);
+
+        // العلاجات ذات السعر الواحد لكل الحالة (Night Guard، Flex Complete...): تظهر مرة واحدة
+        if (t.singlePrice) {
+            const catKey = t.category || 'other';
+            const catObj = TREATMENT_TREE[catKey];
+            if (!grouped[catKey]) grouped[catKey] = { label: pickLabel(catObj) || t.categoryLabel || 'أخرى', color: (catObj?.color) || '#546e7a', items: [] };
+            const isFirst = !seenSingleKeys.has(t.key);
+            if (isFirst) seenSingleKeys.add(t.key);
+            grouped[catKey].items.push({
+                tooth: toothNum,
+                displayLabel: pickLabel(t) + (isFirst ? '' : ' (متضمّن)'),
+                color: t.color,
+                effectivePrice: isFirst ? (t.price || 0) : 0,
+                isOrphanPontic: false
+            });
+            if (isFirst) totalPrice += (t.price || 0);
+            return;
+        }
+
+        // Flexible Partial Denture: السعر يجمَّع لاحقاً حسب العدد
+        if (t.dynamicPartial) {
+            const catKey = t.category || 'other';
+            const catObj = TREATMENT_TREE[catKey];
+            if (!grouped[catKey]) grouped[catKey] = { label: pickLabel(catObj) || t.categoryLabel || 'أخرى', color: (catObj?.color) || '#546e7a', items: [] };
+            if (!partialEntries[t.dynamicPartial]) partialEntries[t.dynamicPartial] = { catKey, color: t.color, label: pickLabel(t), items: [] };
+            partialEntries[t.dynamicPartial].items.push({ tooth: toothNum, color: t.color });
+            return;
+        }
 
         if (t.isPontic) {
             const neighborData = getPonticEffectiveData(toothNum, toothTreatments, toothConnections);
             if (neighborData) {
                 // متصل → يندمج تحت كاتيجوري السن المجاور بنفس اللون والاسم والسعر
                 const catKey = neighborData.category || 'other';
-                if (!grouped[catKey]) grouped[catKey] = { label: neighborData.categoryLabel || 'أخرى', color: (TREATMENT_TREE[catKey]?.color) || '#546e7a', items: [] };
+                const catObj = TREATMENT_TREE[catKey];
+                if (!grouped[catKey]) grouped[catKey] = { label: pickLabel(catObj) || neighborData.categoryLabel || 'أخرى', color: (catObj?.color) || '#546e7a', items: [] };
                 grouped[catKey].items.push({
                     tooth: toothNum,
-                    displayLabel: neighborData.label,
+                    displayLabel: pickLabel(neighborData),
                     color: neighborData.color,
                     effectivePrice: neighborData.price,
                     isOrphanPontic: false
@@ -1622,17 +1805,34 @@ function updateTreatmentsSummary() {
             }
         } else {
             const catKey = t.category || 'other';
-            if (!grouped[catKey]) grouped[catKey] = { label: t.categoryLabel || 'أخرى', color: (TREATMENT_TREE[catKey]?.color) || '#546e7a', items: [] };
+            const catObj = TREATMENT_TREE[catKey];
+            if (!grouped[catKey]) grouped[catKey] = { label: pickLabel(catObj) || t.categoryLabel || 'أخرى', color: (catObj?.color) || '#546e7a', items: [] };
             const price = (typeof t.price === 'number') ? t.price : 0;
             grouped[catKey].items.push({
                 tooth: toothNum,
-                displayLabel: t.label + (t.subOptionLabel ? ` · ${t.subOptionLabel}` : ''),
+                displayLabel: pickLabel(t) + (t.subOptionLabel ? ` · ${t.subOptionLabel}` : ''),
                 color: t.color,
                 effectivePrice: price,
                 isOrphanPontic: false
             });
             totalPrice += price;
         }
+    });
+
+    // إضافة بنود Flexible Partial Denture حسب العدد
+    Object.entries(partialEntries).forEach(([type, entry]) => {
+        const sumPrice = (type === 'flex') ? getFlexPartialTotal(entry.items.length) : 0;
+        if (!grouped[entry.catKey]) grouped[entry.catKey] = { label: pickLabel(TREATMENT_TREE[entry.catKey]) || 'أخرى', color: TREATMENT_TREE[entry.catKey]?.color || '#546e7a', items: [] };
+        entry.items.forEach((it, idx) => {
+            grouped[entry.catKey].items.push({
+                tooth: it.tooth,
+                displayLabel: entry.label + (idx === 0 ? ` (× ${entry.items.length})` : ''),
+                color: entry.color,
+                effectivePrice: idx === 0 ? sumPrice : 0,
+                isOrphanPontic: false
+            });
+        });
+        totalPrice += sumPrice;
     });
 
     count.textContent = Object.keys(toothTreatments).length;
@@ -1712,6 +1912,7 @@ async function saveCaseToFirebase() {
             const computedTotal = calcCaseTotalPrice(toothTreatments);
             const updated = Object.assign({}, existing, {
                 patientName, notes, toothTreatments, toothConnections,
+                missingSlots,
                 total: computedTotal,
                 paidAmount: existing.paidAmount || 0,
                 remainingAmount: Math.max(0, computedTotal - (existing.paidAmount || 0)),
@@ -1781,6 +1982,7 @@ async function saveCaseToFirebase() {
         notes,
         toothTreatments,
         toothConnections,
+        missingSlots,
         orderStatus: finalOrderStatus,
         statusHistory,
         createdAt: now,
@@ -1890,6 +2092,14 @@ function loadCaseToDashboard(caseData) {
 
     toothTreatments = caseData.toothTreatments || {};
     toothConnections = caseData.toothConnections || {};
+    missingSlots = caseData.missingSlots || {};
+    // إعادة تطبيق missing-slot ظاهرياً بعد رسم الأسنان
+    setTimeout(() => {
+        Object.values(missingSlots).forEach(slotTooth => {
+            const btn = Array.from(document.querySelectorAll('.tooth-button')).find(b => parseInt(b.innerText) === Number(slotTooth));
+            if (btn) btn.classList.add('missing-slot');
+        });
+    }, 200);
 
     resetTeethUI();
     for (const [tooth, treatment] of Object.entries(toothTreatments)) {
@@ -2022,8 +2232,11 @@ function resetForm() {
         btn.removeAttribute('data-treatment');
     });
     document.querySelectorAll('.connection-dot').forEach(dot => dot.classList.remove('connected'));
+    document.querySelectorAll('.tooth-button.missing-slot').forEach(b => b.classList.remove('missing-slot'));
+    document.querySelectorAll('.tooth-button.adjacent-pick').forEach(b => b.classList.remove('adjacent-pick'));
     toothTreatments = {};
     toothConnections = {};
+    missingSlots = {};
     selectedTooth = null;
     currentTreatment = null;
     currentCaseId = null;
@@ -2100,17 +2313,13 @@ function addConnectionDots() {
             dot.addEventListener('click', (e) => {
                 e.stopPropagation();
                 if (isReadOnly) return;
-                // منع التفعيل لو السنّتين الملاصقتين مش معالَجَتين (الإلغاء مسموح دائماً)
+                // منع التفعيل لو السنّتين الملاصقتين مش معالَجَتين — نلوّن السنتين بدل النقطة
                 const isCurrentlyConnected = dot.classList.contains('connected');
                 if (!isCurrentlyConnected) {
                     const t1HasTx = !!toothTreatments[pair[0]];
                     const t2HasTx = !!toothTreatments[pair[1]];
                     if (!t1HasTx || !t2HasTx) {
-                        dot.classList.remove('invalid-flash');
-                        // إعادة تشغيل الأنيميشن
-                        void dot.offsetWidth;
-                        dot.classList.add('invalid-flash');
-                        setTimeout(() => dot.classList.remove('invalid-flash'), 700);
+                        flashTeethGlow([pair[0], pair[1]]);
                         return;
                     }
                 }
@@ -2145,7 +2354,7 @@ function setupTreatmentButtons() {
         btn.addEventListener('click', () => {
             if (isReadOnly) { alert("🔒 لا يمكن تعديل العلاج في وضع القراءة فقط!"); return; }
             const patientName = document.getElementById('patientName').value.trim();
-            if (!patientName) { alert("⚠️ الرجاء إدخال اسم المريض أولاً!"); return; }
+            if (!patientName) { glowPatientNameInput(); return; }
             document.querySelectorAll('.treatment-btn').forEach(b => b.classList.remove('selected-treatment'));
             btn.classList.add('selected-treatment');
             currentTreatment = btn.dataset.treatment;
@@ -2217,8 +2426,13 @@ function initAdvancedDentalSystem() {
         button.addEventListener("click", () => {
             if (_dragEndedRecently) return;
             if (isReadOnly) { alert("🔒 لا يمكن تحديد السن في وضع القراءة فقط!"); return; }
+            // لو السن في وضع "اختيار الفجوة" للسبيس مينتينر — تعامل خاص
+            if (button.classList.contains('adjacent-pick')) {
+                handleMissingSlotPick(number);
+                return;
+            }
             const patientName = document.getElementById('patientName').value.trim();
-            if (!patientName) { alert("⚠️ الرجاء إدخال اسم المريض أولاً!"); return; }
+            if (!patientName) { glowPatientNameInput(); return; }
             document.querySelectorAll('.tooth-button').forEach(btn => btn.classList.remove('selected'));
             button.classList.add('selected');
             selectedTooth = number;
@@ -2688,8 +2902,6 @@ async function loadWaitingTab(container, doctorKey, overlay, card) {
           </div>
           <h4 style="color:#ffd700; border-bottom:1px solid #444; padding-bottom:6px;">⏳ منتظرة الإرسال (قابلة للتعديل/الحذف)</h4>
           <div id="poolWaitingList" style="margin:10px 0 22px;"></div>
-          <h4 style="color:#81c784; border-bottom:1px solid #444; padding-bottom:6px;">🚚 تم إرسالها (للقراءة فقط)</h4>
-          <div id="poolDispatchedList" style="margin:10px 0;"></div>
         `;
 
         // قائمة المنتظرة
@@ -2722,22 +2934,8 @@ async function loadWaitingTab(container, doctorKey, overlay, card) {
             });
         }
 
-        // قائمة المرسلة
-        const dList = container.querySelector('#poolDispatchedList');
-        if (dispatched.length === 0) {
-            dList.innerHTML = '<p style="color:#888; text-align:center; padding:14px;">لا يوجد سجل إرسال سابق</p>';
-        } else {
-            dispatched.forEach(r => {
-                const dt = r.dispatchedAt ? new Date(r.dispatchedAt).toLocaleString('ar-EG') : '';
-                const row = document.createElement('div');
-                row.style.cssText = 'padding:10px 12px; margin-bottom:8px; background:#1f2630; border-radius:10px; border-right:3px solid #4caf50;';
-                row.innerHTML = `
-                  <strong style="color:#fff;">👤 ${escapeHtml(r.patientName || '')}</strong>
-                  <span style="color:#aaa; margin-right:10px;">🆔 ${escapeHtml(r.caseId || '')}</span>
-                  <br><small style="color:#888;">📅 ${r.year}/${r.month}/${r.day} • 💰 ${(Number(r.total) || 0).toLocaleString('en-US')} ج.م • 🛵 ${dt}</small>`;
-                dList.appendChild(row);
-            });
-        }
+        // قائمة المرسلة — تم إلغاؤها بناءً على طلب المستخدم
+        void dispatched;
 
         // زر طلب مندوب
         const dispatchBtn = container.querySelector('#poolDispatchBtn');
@@ -2957,4 +3155,82 @@ function detachCaseListener() {
     _caseListener = null;
     _caseListenerPath = null;
     setAiButtonNotif(false);
+}
+
+// ============= مساعدات الواجهة الجديدة =============
+
+// إبراز حقل اسم المريض بنبضة ذهبية بدلاً من alert
+function glowPatientNameInput() {
+    const input = document.getElementById('patientName');
+    if (!input) return;
+    input.classList.remove('glow-required');
+    void input.offsetWidth;
+    input.classList.add('glow-required');
+    try { input.focus({ preventScroll: false }); } catch(e) { input.focus(); }
+    setTimeout(() => input.classList.remove('glow-required'), 1900);
+}
+
+// نبضة ذهبية على مجموعة من أزرار الأسنان (بدلاً من احمرار النقطة)
+function flashTeethGlow(toothNumbers) {
+    if (!Array.isArray(toothNumbers)) toothNumbers = [toothNumbers];
+    toothNumbers.forEach(n => {
+        const btn = Array.from(document.querySelectorAll('.tooth-button')).find(b => parseInt(b.innerText) === Number(n));
+        if (!btn) return;
+        btn.classList.remove('glow-flash');
+        void btn.offsetWidth;
+        btn.classList.add('glow-flash');
+        setTimeout(() => btn.classList.remove('glow-flash'), 750);
+    });
+}
+
+// بدء وضع اختيار السن المفقود (بعد تطبيق Space Maintainer):
+// السنّان الملاصقان لسن العلاج يومضان برتقالياً، والمستخدم يضغط أحدهما ليُعلّم كسن مفقود.
+function startMissingSlotPick(spaceMaintainerTooth) {
+    // امسح أي وضع اختيار سابق
+    document.querySelectorAll('.tooth-button.adjacent-pick').forEach(b => b.classList.remove('adjacent-pick'));
+    const adjacents = [];
+    adjacentPairs.forEach(([a, b]) => {
+        if (a === spaceMaintainerTooth) adjacents.push(b);
+        else if (b === spaceMaintainerTooth) adjacents.push(a);
+    });
+    if (adjacents.length === 0) return;
+    // علّم زر العلاج (سن السبيس مينتينر) كمصدر الاختيار الحالي
+    const teethContainer = document.getElementById('teethContainer');
+    if (teethContainer) teethContainer.dataset.pickingFor = String(spaceMaintainerTooth);
+    adjacents.forEach(n => {
+        const btn = Array.from(document.querySelectorAll('.tooth-button')).find(b => parseInt(b.innerText) === n);
+        if (btn) btn.classList.add('adjacent-pick');
+    });
+}
+
+// التعامل مع ضغط سن متجاور أثناء وضع اختيار السن المفقود
+function handleMissingSlotPick(pickedTooth) {
+    const teethContainer = document.getElementById('teethContainer');
+    const smTooth = teethContainer && teethContainer.dataset.pickingFor ? Number(teethContainer.dataset.pickingFor) : null;
+    if (!smTooth) {
+        document.querySelectorAll('.tooth-button.adjacent-pick').forEach(b => b.classList.remove('adjacent-pick'));
+        return;
+    }
+    // أزل وضع الاختيار من كل الأسنان
+    document.querySelectorAll('.tooth-button.adjacent-pick').forEach(b => b.classList.remove('adjacent-pick'));
+    delete teethContainer.dataset.pickingFor;
+    // أزل أي missing-slot قديم لنفس السبيس مينتينر
+    const oldSlot = missingSlots[smTooth];
+    if (oldSlot) {
+        const oldBtn = Array.from(document.querySelectorAll('.tooth-button')).find(b => parseInt(b.innerText) === oldSlot);
+        if (oldBtn) oldBtn.classList.remove('missing-slot');
+    }
+    missingSlots[smTooth] = pickedTooth;
+    const pickedBtn = Array.from(document.querySelectorAll('.tooth-button')).find(b => parseInt(b.innerText) === pickedTooth);
+    if (pickedBtn) {
+        // امسح أي علاج كان عليه
+        if (toothTreatments[pickedTooth]) {
+            delete toothTreatments[pickedTooth];
+            pickedBtn.style.background = '';
+            pickedBtn.style.color = '';
+            pickedBtn.removeAttribute('data-treatment');
+            updateTreatmentsSummary();
+        }
+        pickedBtn.classList.add('missing-slot');
+    }
 }
